@@ -1,8 +1,9 @@
 import subprocess
 from intervaltree import IntervalTree
-from anytree import Node as VisualNode
+from anytree import RenderTree, Node as VisualNode
 from intervaltree.node import Node
 from anytree.exporter import DotExporter
+from typing import cast
 
 
 def get_traverse_tree(node: Node) -> VisualNode:
@@ -24,7 +25,7 @@ def get_traverse_tree(node: Node) -> VisualNode:
 
 
 def render_tree(itree: IntervalTree):
-    root = get_traverse_tree(itree.top_node)
+    root = get_traverse_tree(cast(Node, itree.top_node))
 
     # Export to a .dot file for Graphviz
     DotExporter(root).to_dotfile("tree.dot")
@@ -33,3 +34,7 @@ def render_tree(itree: IntervalTree):
     subprocess.run(command, shell=True)
 
     return 'tree.png'
+
+
+def render_tree_str(itree: IntervalTree) -> RenderTree:
+    return RenderTree(get_traverse_tree(cast(Node, itree.top_node)))

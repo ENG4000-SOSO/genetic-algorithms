@@ -1,8 +1,7 @@
-from intervaltree import Interval, IntervalTree
-from datetime import datetime, timedelta, timezone
+from intervaltree import Interval
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
-import random
 
 
 class Priority(Enum):
