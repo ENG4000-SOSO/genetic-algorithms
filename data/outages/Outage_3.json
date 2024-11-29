@@ -1,0 +1,10 @@
+{
+    "OutageStartTime": "2023-11-18T18:00:14",
+    "OutageEndTime": "2023-11-19T20:47:27",
+    "Satellite": "SOSO-3",
+    "Recurrence": [
+        {
+            "Revist": "False"
+        }
+    ]
+}

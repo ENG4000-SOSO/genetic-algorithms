@@ -1,46 +1,32 @@
 from intervaltree import Interval
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Optional
+from skyfield.api import EarthSatellite
 
 
-class Priority(Enum):
-    LOW = 1
-    MEDIUM = 2
-    HIGH = 3
-
-
-class Job:
+class OutageRequest:
     name: str
+    satellite: EarthSatellite
     start: datetime
     end: datetime
-    priority: Priority
-    latitude: int
-    longitude: int
 
-    def __init__(self, name: str, start: Optional[str], end: Optional[str], priority: Optional[str], latitude: int, longitude: int):
+    def __init__(self, name: str, satellite: EarthSatellite, start: Optional[str], end: Optional[str]):
         if not name:
             raise Exception('name missing')
+        if not satellite:
+            raise Exception('satellite missing')
         if not start:
             raise Exception('start time missing')
         if not end:
             raise Exception('end time missing')
-        if not priority:
-            raise Exception('priority missing')
-        if not latitude:
-            raise Exception('latitude missing')
-        if not longitude:
-            raise Exception('longitude missing')
 
         self.name = name
+        self.satellite = satellite
         self.start = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
         self.end = datetime.fromisoformat(end).replace(tzinfo=timezone.utc)
-        self.priority = Priority(priority)
-        self.latitude = latitude
-        self.longitude = longitude
 
     def __str__(self):
-        return f'{self.name} P{self.priority.value}'
+        return f'{self.name} - {self.satellite.name}'
 
     def __repr__(self) -> str:
         return str(self)
