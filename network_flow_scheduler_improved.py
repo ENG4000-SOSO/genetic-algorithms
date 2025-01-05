@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import json
 from datetime import timezone
-from typing import List, Dict, Tuple, Set, cast
+from typing import List, Dict, Tuple, Set, NamedTuple, cast
 from pprint import pp
 from job import Job
 from outage_request import OutageRequest
@@ -15,6 +15,109 @@ import time
 import logging
 from functools import wraps
 from debug import logger
+from dataclasses import dataclass
+
+
+class GraphEdge(NamedTuple):
+    u: str
+    v: str
+    f: int
+
+
+class SourceToJobEdge(GraphEdge):
+    '''
+    Representation of a graph edge connecting a source node to a job node.
+    '''
+
+    @property
+    def source(self) -> str:
+        return self.u
+    '''
+    The source node of the edge. This should always be the string literal
+    'source' because the source node never changes.
+    '''
+
+    @property
+    def job(self) -> str:
+        '''
+        The job node of the edge. This will be the string representation of the job.
+        '''
+        return self.v
+
+    @property
+    def flow(self) -> int:
+        return self.f
+    '''
+    The flow across the edge.
+    '''
+
+
+class JobToSatelliteTimeSlotEdge(GraphEdge):
+    '''
+    Representation of a graph edge connecting a job node to a satellite time
+    slot node.
+    '''
+
+    @property
+    def job(self) -> str:
+        return self.u
+    '''
+    The job node of the edge. This will be the string representation of the job.
+    '''
+
+    @property
+    def satellite_timeslot(self) -> str:
+        return self.v
+    '''
+    The satellite time slot node of the edge. This will be the string
+    representation of an interval (with a start and end datetime) for a
+    satellite.
+    '''
+
+    @property
+    def flow(self) -> int:
+        return self.f
+    '''
+    The flow across the edge.
+    '''
+
+
+class SatelliteTimeSlotToSinkEdge(GraphEdge):
+    '''
+    Representation of a graph edge connecting a job node to a satellite time
+    slot node.
+    '''
+
+    @property
+    def satellite_timeslot(self) -> str:
+        return self.u
+    '''
+    The satellite time slot node of the edge. This will be the string
+    representation of an interval (with a start and end datetime) for a
+    satellite.
+    '''
+
+    @property
+    def sink(self) -> str:
+        return self.v
+    '''
+    The sink node of the edge. This should always be the string literal
+    'sink' because the sink node never changes.
+    '''
+
+    @property
+    def flow(self) -> int:
+        return self.f
+    '''
+    The flow across the edge.
+    '''
+
+
+@dataclass
+class Edges:
+    sourceToJobEdges: List[SourceToJobEdge]
+    jobToSatelliteTimeSlotEdges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]
+    satelliteTimeSlotToSinkEdges: Dict[EarthSatellite, List[SatelliteTimeSlotToSinkEdge]]
 
 
 eph = load('de421.bsp')
@@ -35,7 +138,8 @@ event_names = f'rise above {altitude_degrees}°', \
 #     ]
 # )
 logger: logging.Logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+# logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 stream_handler = logging.StreamHandler()
 stream_handler.setLevel(logging.DEBUG)
 stream_handler.setFormatter(
@@ -174,7 +278,7 @@ def parse_jobs(order_data_dir: Path) -> List[Job]:
 def parse_outage_requests(
         outage_request_data_dir: Path,
         satellites: List[EarthSatellite]
-    ) -> List[Job]:
+    ) -> List[OutageRequest]:
     '''
     Parses outage requests from a directory of JSON files.
 
@@ -188,7 +292,7 @@ def parse_outage_requests(
     Returns:
         The list of parsed outage requests.
     '''
-    outage_requests = []
+    outage_requests: List[OutageRequest] = []
     counter = counter_generator()
     sat_name_to_sat = {sat.name: sat for sat in satellites}
 
@@ -364,11 +468,7 @@ def generate_initial_graph_edges(
         trees: Dict[EarthSatellite, IntervalTree],
         jobs: List[Job],
         satellites: List[EarthSatellite]
-    ) -> Tuple[
-        List[Tuple[str, str, int]],
-        Dict[EarthSatellite, List[Tuple[str, str, int]]],
-        Dict[EarthSatellite, List[Tuple[str, str, int]]]
-    ]:
+    ) -> Edges:
     '''
     Generates initial graph edges for a network flow given satellites, jobs, and
     interval trees.
@@ -388,19 +488,22 @@ def generate_initial_graph_edges(
 
     Returns:
         A tuple containing
+
         1. A list of edges from the source to jobs, represented as tuples of 
             `(source, job, flow)`, where `flow` indicates the amount of flow.
+
         2. A dictionary mapping each satellite to a list of edges from jobs to
             that  satellite time slot, represented as tuples of
             `(job, satellite time slot, flow)`, where `flow`  indicates the
             amount of flow.
+
         3. A dictionary mapping each satellite to a list of edges from that
             satellite  to the sink, represented as tuples of
             `(satellite time slot, sink, flow)`, where `flow` indicates the
             amount of flow.
     '''
     # Edges from source to each job
-    source_edges = [('source', job.name, 1) for job in jobs]
+    source_edges = [SourceToJobEdge('source', job.name, 1) for job in jobs]
 
     # Edges from jobs to timeslots.
     #
@@ -411,37 +514,45 @@ def generate_initial_graph_edges(
     # This for loop just creates edges between each job and the intervals that
     # it could be scheduled in.
     job_to_timeslot_edges = []
-    sat_edges = {sat: [] for sat in satellites}
+    sat_edges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]] = {
+        sat: [] for sat in satellites
+    }
     for sat, tree in trees.items():
         for interval in tree:
             for job in interval.data:
                 sat_edges[sat].append(
-                    (job.name, f'{sat.name} {interval.begin} {interval.end}', 1)
+                    JobToSatelliteTimeSlotEdge(
+                        job.name,
+                        f'{sat.name} {interval.begin} {interval.end}',
+                        1
+                    )
                 )
                 job_to_timeslot_edges.append(
                     (job.name, f'{sat.name} {interval.begin} {interval.end}', 1)
                 )
 
     # Edges from timeslots to the sink
-    sat_to_sink_edges = {sat: [] for sat in satellites}
+    sat_to_sink_edges: Dict[EarthSatellite, List[SatelliteTimeSlotToSinkEdge]] = {
+        sat: [] for sat in satellites
+    }
     for sat, tree in trees.items():
         for interval in tree:
             sat_to_sink_edges[sat].append(
-                (f'{sat.name} {interval.begin} {interval.end}', 'sink', 1)
+                SatelliteTimeSlotToSinkEdge(
+                    f'{sat.name} {interval.begin} {interval.end}',
+                    'sink',
+                    1
+                )
             )
 
-    return source_edges, sat_edges, sat_to_sink_edges
+    return Edges(source_edges, sat_edges, sat_to_sink_edges)
 
 
 def extract_optimal_edges(
         flow_dict: dict,
         jobs: List[Job],
         satellites: List[EarthSatellite]
-    ) -> Tuple[
-        List[Tuple[str, str, int]],
-        Dict[EarthSatellite, List[Tuple[str, str, int]]],
-        Dict[EarthSatellite, List[Tuple[str, str, int]]]
-    ]:
+    ) -> Edges:
     '''
     Extracts the edges from an optimal flow network. Only the edges with nonzero
     flow are extracted.
@@ -471,41 +582,41 @@ def extract_optimal_edges(
         Note that the flow will always be 1 because edges with 0 flow are
         ignored and the maximum capacity of every edge is 1.
     '''
-    new_source_edges = []
-    new_sat_edges = {sat: [] for sat in satellites}
-    new_sat_to_sink_edges = {sat: [] for sat in satellites}
+    new_source_edges: List[SourceToJobEdge] = []
+    new_sat_edges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]] = {sat: [] for sat in satellites}
+    new_sat_to_sink_edges: Dict[EarthSatellite, List[SatelliteTimeSlotToSinkEdge]] = {sat: [] for sat in satellites}
 
     for u in flow_dict:
         for v, flow in flow_dict[u].items():
             if isinstance(u, str) and u == 'source':
                 if flow > 0:
-                    new_source_edges.append((u,v,1))
+                    new_source_edges.append(SourceToJobEdge(u,v,1))
             elif isinstance(u, str) and u in [job.name for job in jobs]:
                 if flow > 0:
                     if v.startswith('SOSO-1'):
-                        new_sat_edges[satellites[0]].append((u,v,1))
+                        new_sat_edges[satellites[0]].append(JobToSatelliteTimeSlotEdge(u,v,1))
                     elif v.startswith('SOSO-2'):
-                        new_sat_edges[satellites[1]].append((u,v,1))
+                        new_sat_edges[satellites[1]].append(JobToSatelliteTimeSlotEdge(u,v,1))
                     elif v.startswith('SOSO-3'):
-                        new_sat_edges[satellites[2]].append((u,v,1))
+                        new_sat_edges[satellites[2]].append(JobToSatelliteTimeSlotEdge(u,v,1))
                     elif v.startswith('SOSO-4'):
-                        new_sat_edges[satellites[3]].append((u,v,1))
+                        new_sat_edges[satellites[3]].append(JobToSatelliteTimeSlotEdge(u,v,1))
                     elif v.startswith('SOSO-5'):
-                        new_sat_edges[satellites[4]].append((u,v,1))
+                        new_sat_edges[satellites[4]].append(JobToSatelliteTimeSlotEdge(u,v,1))
             elif isinstance(u, str) and u.startswith('SOSO'):
                 if flow > 0:
                     if u.startswith('SOSO-1'):
-                        new_sat_to_sink_edges[satellites[0]].append((u,v,1))
+                        new_sat_to_sink_edges[satellites[0]].append(SatelliteTimeSlotToSinkEdge(u,v,1))
                     elif u.startswith('SOSO-2'):
-                        new_sat_to_sink_edges[satellites[1]].append((u,v,1))
+                        new_sat_to_sink_edges[satellites[1]].append(SatelliteTimeSlotToSinkEdge(u,v,1))
                     elif u.startswith('SOSO-3'):
-                        new_sat_to_sink_edges[satellites[2]].append((u,v,1))
+                        new_sat_to_sink_edges[satellites[2]].append(SatelliteTimeSlotToSinkEdge(u,v,1))
                     elif u.startswith('SOSO-4'):
-                        new_sat_to_sink_edges[satellites[3]].append((u,v,1))
+                        new_sat_to_sink_edges[satellites[3]].append(SatelliteTimeSlotToSinkEdge(u,v,1))
                     elif u.startswith('SOSO-5'):
-                        new_sat_to_sink_edges[satellites[4]].append((u,v,1))
+                        new_sat_to_sink_edges[satellites[4]].append(SatelliteTimeSlotToSinkEdge(u,v,1))
 
-    return new_source_edges, new_sat_edges, new_sat_to_sink_edges
+    return Edges(new_source_edges, new_sat_edges, new_sat_to_sink_edges)
 
 
 @debug
@@ -514,9 +625,9 @@ def plot(
         trees: Dict[EarthSatellite, IntervalTree],
         jobs: List[Job],
         satellites: List[EarthSatellite],
-        source_edges: List[Tuple[str, str, int]],
-        sat_edges: Dict[EarthSatellite, List[Tuple[str, str, int]]],
-        sat_to_sink_edges: Dict[EarthSatellite, List[Tuple[str, str, int]]],
+        source_edges: List[SourceToJobEdge],
+        sat_edges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]],
+        sat_to_sink_edges: Dict[EarthSatellite, List[SatelliteTimeSlotToSinkEdge]],
         title: str
     ) -> None:
     '''
@@ -672,15 +783,20 @@ def main():
     G = nx.DiGraph()
 
     # Generate edges for the graph
-    source_to_jobs_edges, jobs_to_sat_edges, sat_to_sink_edges = \
+    # source_to_jobs_edges, jobs_to_sat_edges, sat_to_sink_edges = \
+    edges = \
         generate_initial_graph_edges(trees, jobs, satellites)
+    source_to_jobs_edges = edges.sourceToJobEdges
+    jobs_to_sat_edges = edges.jobToSatelliteTimeSlotEdges
+    sat_to_sink_edges = edges.satelliteTimeSlotToSinkEdges
 
     sink_edges = [sat_to_sink_edge for sat_edges in sat_to_sink_edges.values() for sat_to_sink_edge in sat_edges]
     job_to_timeslot_edges = [job_to_timeslot_edge for sat_edges in jobs_to_sat_edges.values() for job_to_timeslot_edge in sat_edges]
-    edges = source_to_jobs_edges + job_to_timeslot_edges + sink_edges
+
+    graph_edges = source_to_jobs_edges + job_to_timeslot_edges + sink_edges
 
     # Add edges with capacities to the graph
-    for u, v, capacity in edges:
+    for u, v, capacity in graph_edges:
         G.add_edge(u, v, capacity=capacity)
 
     # Define source and sink nodes
@@ -694,8 +810,12 @@ def main():
     logger.info(f'Finding the maximum flow took {graph_t1 - graph_t0} seconds')
 
     # Get the optimal edges from the graph
-    new_source_edges, new_sat_edges, new_sat_to_sink_edges = \
+    # new_source_edges, new_sat_edges, new_sat_to_sink_edges = \
+    optimal_edges = \
         extract_optimal_edges(flow_dict, jobs, satellites)
+    new_source_edges = optimal_edges.sourceToJobEdges
+    new_sat_edges = optimal_edges.jobToSatelliteTimeSlotEdges
+    new_sat_to_sink_edges = optimal_edges.satelliteTimeSlotToSinkEdges
 
     new_job_to_timeslot_edges = []
     for sat_edges in jobs_to_sat_edges.values():
