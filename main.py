@@ -33,4 +33,7 @@ logger.info(f'Parsing data took {parse_t1 - parse_t0} seconds')
 
 solution = run(satellites, jobs, outage_requests, ts, eph)
 
-print(solution)
+for satellite, job_to_satellite_time_slots in solution.items():
+    print(f'Satellite: {satellite.name}')
+    for job_to_satellite_time_slot in job_to_satellite_time_slots:
+        print(f'    {job_to_satellite_time_slot.job} @ {job_to_satellite_time_slot.satellite_timeslot.start} - {job_to_satellite_time_slot.satellite_timeslot.end}')

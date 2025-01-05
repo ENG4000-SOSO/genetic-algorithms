@@ -5,9 +5,22 @@ optimization solution to the satellite scheduling problem.
 
 
 from dataclasses import dataclass
-from typing import List, Dict, NamedTuple
+from datetime import datetime
+from typing import Any, cast, List, Dict, NamedTuple
 
 from skyfield.api import EarthSatellite
+
+from soso.job import Job
+
+
+@dataclass(frozen=True)
+class SatelliteTimeSlot:
+    satellite: EarthSatellite
+    start: datetime
+    end: datetime
+
+    def __hash__(self):
+        return hash((self.satellite, self.start, self.end))
 
 
 class GraphEdge(NamedTuple):
@@ -15,12 +28,12 @@ class GraphEdge(NamedTuple):
     Representation of an edge in a network flow graph.
     '''
 
-    u: str
+    u: Any
     '''
     The first node of the edge.
     '''
 
-    v: str
+    v: Any
     '''
     The second node of the edge.
     '''
@@ -42,15 +55,15 @@ class SourceToJobEdge(GraphEdge):
         The source node of the edge. This should always be the string
         literal 'source' because the source node never changes.
         '''
-        return self.u
+        return cast(str, self.u)
 
     @property
-    def job(self) -> str:
+    def job(self) -> Job:
         '''
         The job node of the edge. This will be the string representation of the
         job.
         '''
-        return self.v
+        return cast(Job, self.v)
 
     @property
     def flow(self) -> int:
@@ -67,21 +80,21 @@ class JobToSatelliteTimeSlotEdge(GraphEdge):
     '''
 
     @property
-    def job(self) -> str:
+    def job(self) -> Job:
         '''
         The job node of the edge. This will be the string representation of the
         job.
         '''
-        return self.u
+        return cast(Job, self.u)
 
     @property
-    def satellite_timeslot(self) -> str:
+    def satellite_timeslot(self) -> SatelliteTimeSlot:
         '''
         The satellite time slot node of the edge. This will be the string
         representation of an interval (with a start and end datetime) for a
         satellite.
         '''
-        return self.v
+        return cast(SatelliteTimeSlot, self.v)
 
     @property
     def flow(self) -> int:
@@ -98,13 +111,13 @@ class SatelliteTimeSlotToSinkEdge(GraphEdge):
     '''
 
     @property
-    def satellite_timeslot(self) -> str:
+    def satellite_timeslot(self) -> SatelliteTimeSlot:
         '''
         The satellite time slot node of the edge. This will be the string
         representation of an interval (with a start and end datetime) for a
         satellite.
         '''
-        return self.u
+        return cast(SatelliteTimeSlot, self.u)
 
     @property
     def sink(self) -> str:
@@ -112,7 +125,7 @@ class SatelliteTimeSlotToSinkEdge(GraphEdge):
         The sink node of the edge. This should always be the string literal
         'sink' because the sink node never changes.
         '''
-        return self.v
+        return cast(str, self.v)
 
     @property
     def flow(self) -> int:
@@ -122,7 +135,7 @@ class SatelliteTimeSlotToSinkEdge(GraphEdge):
         return self.f
 
 
-@dataclass
+@dataclass(frozen=True)
 class Edges:
     '''
     Representation of a set of edges in a network flow graph that models the
