@@ -2,7 +2,9 @@ import logging
 import os
 from pathlib import Path
 import time
+
 from skyfield.api import load
+
 from soso.network_flow.network_flow_scheduler_improved import run
 from soso.utils import parse_jobs, parse_outage_requests, parse_satellites
 

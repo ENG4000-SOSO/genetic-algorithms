@@ -7,6 +7,7 @@ additional data types to facilitate its functionality.
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
+
 from intervaltree import Interval
 
 

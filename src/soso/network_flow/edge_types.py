@@ -6,6 +6,7 @@ optimization solution to the satellite scheduling problem.
 
 from dataclasses import dataclass
 from typing import List, Dict, NamedTuple
+
 from skyfield.api import EarthSatellite
 
 

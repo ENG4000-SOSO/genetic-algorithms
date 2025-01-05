@@ -6,6 +6,7 @@ Definition of the outage request class.
 from datetime import datetime, timezone
 from typing import Optional
 from intervaltree import Interval
+
 from skyfield.api import EarthSatellite
 
 

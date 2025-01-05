@@ -7,11 +7,13 @@ SOSO optimization problem, which is useful for debugging.
 
 
 from typing import Dict, List
+
 from intervaltree import IntervalTree
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 from skyfield.api import EarthSatellite
+
 from soso.debug import debug
 from soso.job import Job
 from soso.network_flow.edge_types import \

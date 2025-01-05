@@ -7,11 +7,13 @@ job-satellite scheduling problem.
 from datetime import timezone
 import logging
 import logging.config
-import networkx as nx
 import time
 from typing import cast, Dict, List, Set
+
 from intervaltree import IntervalTree
+import networkx as nx
 from skyfield.api import EarthSatellite, Loader, Time, Timescale, wgs84
+
 from soso.debug import debug
 from soso.job import Job
 from soso.network_flow.edge_types import \

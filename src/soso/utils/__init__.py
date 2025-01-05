@@ -7,7 +7,9 @@ import json
 import os
 from pathlib import Path
 from typing import List
+
 from skyfield.api import EarthSatellite, Timescale
+
 from soso.job import Job
 from soso.outage_request import OutageRequest
 
