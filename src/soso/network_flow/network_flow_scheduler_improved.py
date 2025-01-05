@@ -1,123 +1,32 @@
+'''
+Main functionality for the network flow optimization solution to the
+job-satellite scheduling problem.
+'''
+
+
+from datetime import timezone
+import json
+import logging
+import logging.config
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
 import os
 from pathlib import Path
-import json
-from datetime import timezone
-from typing import List, Dict, Tuple, Set, NamedTuple, cast
-from pprint import pp
-from job import Job
-from outage_request import OutageRequest
-from skyfield.api import wgs84, load, EarthSatellite, Time
-from intervaltree import IntervalTree
-import networkx as nx
-import matplotlib.pyplot as plt
-import numpy as np
 import time
-import logging
-from functools import wraps
-from debug import logger
-from dataclasses import dataclass
-
-
-class GraphEdge(NamedTuple):
-    u: str
-    v: str
-    f: int
-
-
-class SourceToJobEdge(GraphEdge):
-    '''
-    Representation of a graph edge connecting a source node to a job node.
-    '''
-
-    @property
-    def source(self) -> str:
-        return self.u
-    '''
-    The source node of the edge. This should always be the string literal
-    'source' because the source node never changes.
-    '''
-
-    @property
-    def job(self) -> str:
-        '''
-        The job node of the edge. This will be the string representation of the job.
-        '''
-        return self.v
-
-    @property
-    def flow(self) -> int:
-        return self.f
-    '''
-    The flow across the edge.
-    '''
-
-
-class JobToSatelliteTimeSlotEdge(GraphEdge):
-    '''
-    Representation of a graph edge connecting a job node to a satellite time
-    slot node.
-    '''
-
-    @property
-    def job(self) -> str:
-        return self.u
-    '''
-    The job node of the edge. This will be the string representation of the job.
-    '''
-
-    @property
-    def satellite_timeslot(self) -> str:
-        return self.v
-    '''
-    The satellite time slot node of the edge. This will be the string
-    representation of an interval (with a start and end datetime) for a
-    satellite.
-    '''
-
-    @property
-    def flow(self) -> int:
-        return self.f
-    '''
-    The flow across the edge.
-    '''
-
-
-class SatelliteTimeSlotToSinkEdge(GraphEdge):
-    '''
-    Representation of a graph edge connecting a job node to a satellite time
-    slot node.
-    '''
-
-    @property
-    def satellite_timeslot(self) -> str:
-        return self.u
-    '''
-    The satellite time slot node of the edge. This will be the string
-    representation of an interval (with a start and end datetime) for a
-    satellite.
-    '''
-
-    @property
-    def sink(self) -> str:
-        return self.v
-    '''
-    The sink node of the edge. This should always be the string literal
-    'sink' because the sink node never changes.
-    '''
-
-    @property
-    def flow(self) -> int:
-        return self.f
-    '''
-    The flow across the edge.
-    '''
-
-
-@dataclass
-class Edges:
-    sourceToJobEdges: List[SourceToJobEdge]
-    jobToSatelliteTimeSlotEdges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]
-    satelliteTimeSlotToSinkEdges: Dict[EarthSatellite, List[SatelliteTimeSlotToSinkEdge]]
+from typing import cast, Dict, List, Set
+from intervaltree import IntervalTree
+from skyfield.api import EarthSatellite, load, Time, wgs84
+from soso.debug import debug
+from soso.job import Job
+from soso.network_flow.edge_types import \
+    Edges, \
+    JobToSatelliteTimeSlotEdge, \
+    SatelliteTimeSlotToSinkEdge, \
+    SourceToJobEdge
+from soso.network_flow.plot import plot
+from soso.outage_request import OutageRequest
+from soso.utils import counter_generator
 
 
 eph = load('de421.bsp')
@@ -130,36 +39,8 @@ event_names = f'rise above {altitude_degrees}°', \
     'culminate', \
     f'set below {altitude_degrees}°'
 
-# logging.basicConfig(
-#     level=logging.DEBUG,
-#     format='%(asctime)s - %(name)s [%(levelname)s]: %(message)s',
-#     handlers=[
-#         logging.StreamHandler()
-#     ]
-# )
+logging.config.fileConfig('logging_config.ini')
 logger: logging.Logger = logging.getLogger(__name__)
-# logger.setLevel(logging.INFO)
-logger.setLevel(logging.DEBUG)
-stream_handler = logging.StreamHandler()
-stream_handler.setLevel(logging.DEBUG)
-stream_handler.setFormatter(
-    logging.Formatter('%(asctime)s - %(name)s [%(levelname)s]: %(message)s')
-)
-logger.addHandler(stream_handler)
-
-
-def debug(func):
-    '''
-    Executes the decorated function only if the function's module logger is in
-    debug mode. If the function's module logger is in debug mode, the function
-    will not be executed. Use this for generation of complex logs.
-    '''
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        logger = logging.getLogger(func.__module__)
-        if logger.isEnabledFor(logging.DEBUG):
-            return func(*args, **kwargs)
-    return wrapper
 
 
 def get_unschedulable_events(
@@ -232,13 +113,6 @@ def log_interval_trees_after_outages(
                 'outage requests: %s',
             unscheduled_job_set
         )
-
-
-def counter_generator():
-    i = 0
-    while True:
-        yield i
-        i += 1
 
 
 def parse_jobs(order_data_dir: Path) -> List[Job]:
@@ -619,134 +493,12 @@ def extract_optimal_edges(
     return Edges(new_source_edges, new_sat_edges, new_sat_to_sink_edges)
 
 
-@debug
-def plot(
-        G: nx.DiGraph,
-        trees: Dict[EarthSatellite, IntervalTree],
-        jobs: List[Job],
-        satellites: List[EarthSatellite],
-        source_edges: List[SourceToJobEdge],
-        sat_edges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]],
-        sat_to_sink_edges: Dict[EarthSatellite, List[SatelliteTimeSlotToSinkEdge]],
-        title: str
-    ) -> None:
-    '''
-    Plots a flow network representing jobs scheduled into satellites.
-
-    Args:
-        G: The `networkx` graph of the flow network.
-
-        trees: The `dict` of interval trees (each satellite's interval tree).
-
-        jobs: The full list of jobs.
-
-        satellites: The full list of satellites.
-
-        source_edges: Edges in the graph from source to jobs. Tuples are of the
-            form `(sink, job, flow)`.
-
-        sat_edges: Edges in the graph from job to satellite timeslot for each
-            satellite. Tuples are of the form `(job, satellite_timeslot, flow)`.
-
-        sat_to_sink_edges: Edges in the graph from satellite timeslot to sink
-            for each satellite. Tuples are of the form
-            `(satellite_timeslot, sink, flow)`.
-    '''
-
-    fig, ax = plt.subplots()
-
-    pos = nx.multipartite_layout(
-        G,
-        subset_key={
-            'a': ['source'],
-            'b': [job.name for job in jobs],
-            'c': [
-                f'{sat.name} {interval.begin} {interval.end}'
-                for sat, tree in trees.items() for interval in tree
-            ],
-            'd': ['sink']
-        }
-    )
-
-    def array_op(x):
-        coords = pos[x]
-        if x.startswith('Job'):
-            return np.array((coords[0], coords[1]*5))
-        elif x.startswith('SOSO'):
-            return np.array((coords[0], coords[1]*1.2))
-        else:
-            return np.array((coords[0], coords[1]))
-
-    pos = {p:array_op(p) for p in pos}
-
-    source_color = 'white'
-    jobs_color = 'black'
-    soso1_color = '#4d4dff'
-    soso2_color = 'green'
-    soso3_color = '#FFEA00'
-    soso4_color = 'orange'
-    soso5_color = 'red'
-    sink_color = 'black'
-
-    nx.draw_networkx_nodes(G, pos, nodelist=[job.name for job in jobs], node_color=jobs_color, node_size = 5)
-
-    nx.draw_networkx_nodes(G, pos, nodelist=[f'{sat.name} {interval.begin} {interval.end}' for sat, tree in trees.items() for interval in tree if sat.name == 'SOSO-1'], node_color=soso1_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[f'{sat.name} {interval.begin} {interval.end}' for sat, tree in trees.items() for interval in tree if sat.name == 'SOSO-2'], node_color=soso2_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[f'{sat.name} {interval.begin} {interval.end}' for sat, tree in trees.items() for interval in tree if sat.name == 'SOSO-3'], node_color=soso3_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[f'{sat.name} {interval.begin} {interval.end}' for sat, tree in trees.items() for interval in tree if sat.name == 'SOSO-4'], node_color=soso4_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[f'{sat.name} {interval.begin} {interval.end}' for sat, tree in trees.items() for interval in tree if sat.name == 'SOSO-5'], node_color=soso5_color, node_size = 5, edgecolors='black', linewidths=0.1)
-
-    nx.draw_networkx_nodes(G, pos, nodelist=['source'], node_color=source_color, node_size = 15, edgecolors='black', linewidths=0.75)
-    nx.draw_networkx_nodes(G, pos, nodelist=['sink'], node_color=sink_color, node_size = 15)
-
-    nx.draw_networkx_edges(G, pos, edgelist=source_edges, edge_color=jobs_color, arrows=False)
-
-    nx.draw_networkx_edges(G, pos, edgelist=sat_edges[satellites[0]], edge_color=soso1_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_edges[satellites[1]], edge_color=soso2_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_edges[satellites[2]], edge_color=soso3_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_edges[satellites[3]], edge_color=soso4_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_edges[satellites[4]], edge_color=soso5_color, arrows=False)
-
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[0]], edge_color=soso1_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[1]], edge_color=soso2_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[2]], edge_color=soso3_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[3]], edge_color=soso4_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[4]], edge_color=soso5_color, arrows=False)
-
-    plt.title(title)
-    # Create a custom legend
-    legend_elements_1 = [
-        plt.Line2D([0], [0], marker='o', color=jobs_color, lw=0, markersize=5, label='Satellite Jobs')
-    ]
-    legend_elements_2 = [
-        plt.Line2D([0], [0], marker='o', color=soso1_color, lw=0, markersize=5, label='Satellite 1 Timeslots'),
-        plt.Line2D([0], [0], marker='o', color=soso2_color, lw=0, markersize=5, label='Satellite 2 Timeslots'),
-        plt.Line2D([0], [0], marker='o', color=soso3_color, lw=0, markersize=5, label='Satellite 3 Timeslots'),
-        plt.Line2D([0], [0], marker='o', color=soso4_color, lw=0, markersize=5, label='Satellite 4 Timeslots'),
-        plt.Line2D([0], [0], marker='o', color=soso5_color, lw=0, markersize=5, label='Satellite 5 Timeslots')
-    ]
-
-    plt.text(0.01, 0.495, 'source', transform=ax.transAxes)
-    plt.text(0.95, 0.495, 'sink', transform=ax.transAxes)
-    plt.text(0.01, 0.02, 'Flow Source\n(Conceptual)', transform=ax.transAxes)
-    plt.text(0.34, 0.02, 'Jobs', transform=ax.transAxes)
-    plt.text(0.62, 0.02, 'Satellite\nTime Slots', transform=ax.transAxes)
-    plt.text(0.9, 0.02, 'Flow Sink\n(Conceptual)', transform=ax.transAxes)
-
-    # Add the legend to the axis
-    legend_1 = ax.legend(handles=legend_elements_1, loc='upper left')
-    ax.legend(handles=legend_elements_2, loc='upper right')
-    ax.add_artist(legend_1)
-
-    plt.show()
-
-
 def main():
     parse_t0 = time.time()
 
     # === GET SATELLITES AND ORDERS DATA ===
     # Define directories containing the satellites and orders data
-    project_dir = Path(os.path.dirname(__file__))
+    project_dir = Path(os.path.dirname(__file__)).parent.parent.parent
     data_dir = project_dir / 'data'
     order_data_dir = data_dir / 'orders'
     satellite_data_dir = data_dir / 'satellites'

@@ -1,16 +1,32 @@
-from intervaltree import Interval
+'''
+Definition of the outage request class.
+'''
+
+
 from datetime import datetime, timezone
 from typing import Optional
+from intervaltree import Interval
 from skyfield.api import EarthSatellite
 
 
 class OutageRequest:
+    '''
+    Representation of an outage request that renders a satellite unusable for a
+    certain amount of time.
+    '''
+
     name: str
     satellite: EarthSatellite
     start: datetime
     end: datetime
 
-    def __init__(self, name: str, satellite: EarthSatellite, start: Optional[str], end: Optional[str]):
+    def __init__(
+        self,
+        name: str,
+        satellite: EarthSatellite,
+        start: Optional[str],
+        end: Optional[str]
+    ):
         if not name:
             raise Exception('name missing')
         if not satellite:

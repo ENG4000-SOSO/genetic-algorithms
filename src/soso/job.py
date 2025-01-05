@@ -1,16 +1,30 @@
-from intervaltree import Interval
+'''
+Definitions of the job class (jobs that satellites can be asked to perform) and
+additional data types to facilitate its functionality.
+'''
+
+
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
+from intervaltree import Interval
 
 
 class Priority(Enum):
+    '''
+    The priority of a job.
+    '''
+
     LOW = 1
     MEDIUM = 2
     HIGH = 3
 
 
 class Job:
+    '''
+    Representation of a job that a satellite can be asked to perform.
+    '''
+
     name: str
     start: datetime
     end: datetime
@@ -18,7 +32,15 @@ class Job:
     latitude: int
     longitude: int
 
-    def __init__(self, name: str, start: Optional[str], end: Optional[str], priority: Optional[str], latitude: int, longitude: int):
+    def __init__(
+        self,
+        name: str,
+        start: Optional[str],
+        end: Optional[str],
+        priority: Optional[str],
+        latitude: int,
+        longitude: int
+    ):
         if not name:
             raise Exception('name missing')
         if not start:

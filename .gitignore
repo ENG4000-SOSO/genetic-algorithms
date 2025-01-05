@@ -1,3 +1,14 @@
+# Python virtual environment
 venv/*
-__pycache__/*
+
+# Python generated files
+__pycache__/
+
+# Pip generated files
+soso.egg-info/
+
+# IDE configs
 .vscode/*
+
+# Random files for testing
+QUESTIONS.txt
