@@ -1,3 +1,11 @@
+'''
+Functionality related to plotting network flow graphs.
+
+This gives us a visual representation of the network flow graph that models the
+SOSO optimization problem, which is useful for debugging.
+'''
+
+
 from typing import Dict, List
 from intervaltree import IntervalTree
 import matplotlib.pyplot as plt
@@ -6,7 +14,10 @@ import numpy as np
 from skyfield.api import EarthSatellite
 from soso.debug import debug
 from soso.job import Job
-from soso.network_flow.edge_types import SourceToJobEdge, JobToSatelliteTimeSlotEdge, SatelliteTimeSlotToSinkEdge
+from soso.network_flow.edge_types import \
+    JobToSatelliteTimeSlotEdge, \
+    SatelliteTimeSlotToSinkEdge, \
+    SourceToJobEdge
 
 
 @debug

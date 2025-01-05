@@ -5,18 +5,13 @@ job-satellite scheduling problem.
 
 
 from datetime import timezone
-import json
 import logging
 import logging.config
-import matplotlib.pyplot as plt
 import networkx as nx
-import numpy as np
-import os
-from pathlib import Path
 import time
 from typing import cast, Dict, List, Set
 from intervaltree import IntervalTree
-from skyfield.api import EarthSatellite, load, Time, wgs84
+from skyfield.api import EarthSatellite, Loader, Time, Timescale, wgs84
 from soso.debug import debug
 from soso.job import Job
 from soso.network_flow.edge_types import \
@@ -26,18 +21,13 @@ from soso.network_flow.edge_types import \
     SourceToJobEdge
 from soso.network_flow.plot import plot
 from soso.outage_request import OutageRequest
-from soso.utils import counter_generator
 
 
-eph = load('de421.bsp')
-
-ts = load.timescale()
-
-altitude_degrees = 30.0
-
-event_names = f'rise above {altitude_degrees}°', \
-    'culminate', \
-    f'set below {altitude_degrees}°'
+ALTITUDE_DEGREES = 30.0
+'''
+Threshold for the degrees above the horizontal for a satellite to be considered
+to have a point on Earth in its field-of-view.
+'''
 
 logging.config.fileConfig('logging_config.ini')
 logger: logging.Logger = logging.getLogger(__name__)
@@ -115,112 +105,13 @@ def log_interval_trees_after_outages(
         )
 
 
-def parse_jobs(order_data_dir: Path) -> List[Job]:
-    '''
-    Parses orders from a directory of JSON files.
-
-    Args:
-        order_data_dir: The file path of the directory containing the JSON files
-            representing the orders.
-
-    Returns:
-        The list of parsed orders.
-    '''
-    jobs = []
-    counter = counter_generator()
-
-    for filename in os.listdir(order_data_dir):
-        if filename.endswith('.json'):
-            full_path = order_data_dir / filename
-            with open(full_path, 'r') as f:
-                data = json.load(f)
-                if next(counter) > 15:
-                    continue
-                job = Job(
-                    f'Job {next(counter)}',
-                    data['ImageStartTime'],
-                    data['ImageEndTime'],
-                    data['Priority'],
-                    data['Latitude'],
-                    data['Longitude']
-                )
-                jobs.append(job)
-
-    return jobs
-
-
-def parse_outage_requests(
-        outage_request_data_dir: Path,
-        satellites: List[EarthSatellite]
-    ) -> List[OutageRequest]:
-    '''
-    Parses outage requests from a directory of JSON files.
-
-    Args:
-        outage_request_data_dir: The file path of the directory containing the
-            JSON files representing the outage requests.
-
-        satellites: The list of satellites. This will be used to add the
-            satellite reference to the outage request for that satellite.
-
-    Returns:
-        The list of parsed outage requests.
-    '''
-    outage_requests: List[OutageRequest] = []
-    counter = counter_generator()
-    sat_name_to_sat = {sat.name: sat for sat in satellites}
-
-    for filename in os.listdir(outage_request_data_dir):
-        if filename.endswith('.json'):
-            full_path = outage_request_data_dir / filename
-            with open(full_path, 'r') as f:
-                data = json.load(f)
-                outage_request = OutageRequest(
-                    f'Outage Request {next(counter)}',
-                    sat_name_to_sat[data['Satellite']],
-                    data['OutageStartTime'],
-                    data['OutageEndTime']
-                )
-                outage_requests.append(outage_request)
-
-    return outage_requests
-
-
-def parse_satellites(satellite_data_dir: Path) -> List[EarthSatellite]:
-    '''
-    Parses satellites from a directory of JSON files.
-
-    Args:
-        satellite_data_dir: The file path of the directory containing the JSON
-            files representing the satellites.
-
-    Returns:
-        The list of parsed satellites.
-    '''
-    satellites: List[EarthSatellite] = []
-
-    for filename in sorted(os.listdir(satellite_data_dir)):
-        if filename.endswith('.json'):
-            full_path = satellite_data_dir / filename
-            with open(full_path, 'r') as f:
-                data = json.load(f)
-                sat = EarthSatellite(
-                    data['line1'],
-                    data['line2'],
-                    data['name'],
-                    ts
-                )
-                satellites.append(sat)
-
-    return satellites
-
-
 def update_trees_with_jobs(
         trees: Dict[EarthSatellite, IntervalTree],
         sat: EarthSatellite,
         job: Job,
         t0: Time,
-        t1: Time
+        t1: Time,
+        eph: Loader
     ) -> None:
     '''
     Updates interval tree of then given satellite, if possible, with the given
@@ -239,6 +130,8 @@ def update_trees_with_jobs(
         t0: The start time of the window that is being checked.
 
         t1: The end time of the window that is being checked.
+
+        eph: The ephemeris data used to perform astronomical calculations.
     '''
     # Location to be imaged
     location = wgs84.latlon(job.latitude, job.longitude)
@@ -248,7 +141,7 @@ def update_trees_with_jobs(
         location,
         t0,
         t1,
-        altitude_degrees=altitude_degrees
+        altitude_degrees=ALTITUDE_DEGREES
     )
 
     # Check which of the imaging times are in sunlight
@@ -276,7 +169,8 @@ def generate_trees(
         jobs: List[Job],
         outage_requests: List[OutageRequest],
         t0: Time,
-        t1: Time
+        t1: Time,
+        eph: Loader
     ) -> Dict[EarthSatellite, IntervalTree]:
     '''
     Generates interval trees for each satellite representing schedulable jobs.
@@ -296,6 +190,8 @@ def generate_trees(
 
         t0: The end time of the space mission.
 
+        eph: The ephemeris data used to perform astronomical calculations.
+
     Returns:
         The `dict` mapping satellites to their interval tree, where the interval
         trees contain intervals that represent a window of time and the jobs
@@ -313,7 +209,7 @@ def generate_trees(
     # Update every satellite's interval tree with the jobs it can have scheduled
     for sat in satellites:
         for job in jobs:
-            update_trees_with_jobs(trees, sat, job, t0, t1)
+            update_trees_with_jobs(trees, sat, job, t0, t1, eph)
 
     # Merge overlaps in each interval tree.
     #
@@ -493,26 +389,65 @@ def extract_optimal_edges(
     return Edges(new_source_edges, new_sat_edges, new_sat_to_sink_edges)
 
 
-def main():
-    parse_t0 = time.time()
+def format_solution(
+        satellites: List[EarthSatellite],
+        satellite_job_edge_dict: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]
+    ) -> Dict[EarthSatellite, List[str]]:
+    '''
+    Formats the solution in an understandable way for other functionality to use
+    more easily.
 
-    # === GET SATELLITES AND ORDERS DATA ===
-    # Define directories containing the satellites and orders data
-    project_dir = Path(os.path.dirname(__file__)).parent.parent.parent
-    data_dir = project_dir / 'data'
-    order_data_dir = data_dir / 'orders'
-    satellite_data_dir = data_dir / 'satellites'
-    outage_request_data_dir = data_dir / 'outages'
+    Args:
+        satellites: List of satellites (only used to initialize the formatted
+        solution).
 
-    # Parse satellites and orders data
-    satellites = parse_satellites(satellite_data_dir)
-    jobs = parse_jobs(order_data_dir)
-    outage_requests = parse_outage_requests(outage_request_data_dir, satellites)
+        satellite_job_edge_dict: Dictionary mapping each satellite to the
+        optimal edge lists for it, where each edge connects a job to one of the
+        satellite's time slots.
 
-    parse_t1 = time.time()
-    logger.info(f'Parsing data took {parse_t1 - parse_t0} seconds')
+    Returns:
+        Dictionary mapping each satellite to a list of string representations of
+        a job and a time slot for the job.
+    '''
+
+    solution: Dict[EarthSatellite, List[str]] = { sat: [] for sat in satellites }
+
+    for satellite, job_to_satellite_time_slots in satellite_job_edge_dict.items():
+        for job_to_satellite_time_slot in job_to_satellite_time_slots:
+            solution[satellite].append(f'{job_to_satellite_time_slot.job} {job_to_satellite_time_slot.satellite_timeslot}')
+
+    return solution
+
+
+def run(
+    satellites: List[EarthSatellite],
+    jobs: List[Job],
+    outage_requests: List[OutageRequest],
+    ts: Timescale,
+    eph: Loader
+) -> Dict[EarthSatellite, List[str]]:
+    '''
+    The main entry point to the network flow part of the SOSO scheduling
+    algorithm.
+
+    Args:
+        satellites: The list of satellites to be scheduled with jobs and outage
+        requests.
+
+        jobs: The list of jobs to be scheduled.
+
+        outage_requests: The list of (non-negotiable) outage requests.
+
+        ts: The Skyfield timescale being used to simulate events in the future.
+
+        eph: The Skyfield ephemeris data being used to perform astronomical
+        calculations.
+    '''
 
     tree_t0 = time.time()
+
+    # Set of all jobs, will be used later
+    all_jobs = set([job.name for job in jobs])
 
     # === DEFINE START AND END TIMES ===
     # The scheduling will cover the start of the earliest job to the end of the
@@ -523,7 +458,7 @@ def main():
     # === GENERATE INTERVAL TREES ===
     # One interval tree per satellite, where each interval in the tree holds the
     # jobs that could be scheduled in that interval
-    trees = generate_trees(satellites, jobs, outage_requests, t0, t1)
+    trees = generate_trees(satellites, jobs, outage_requests, t0, t1, eph)
 
     tree_t1 = time.time()
     logger.info(f'Making the interval tree took {tree_t1 - tree_t0} seconds')
@@ -535,16 +470,29 @@ def main():
     G = nx.DiGraph()
 
     # Generate edges for the graph
-    # source_to_jobs_edges, jobs_to_sat_edges, sat_to_sink_edges = \
     edges = \
         generate_initial_graph_edges(trees, jobs, satellites)
+
+    # Unpack edges
     source_to_jobs_edges = edges.sourceToJobEdges
     jobs_to_sat_edges = edges.jobToSatelliteTimeSlotEdges
     sat_to_sink_edges = edges.satelliteTimeSlotToSinkEdges
 
+    # Collect all jobs that are potentially schedulable
+    schedulable_jobs: Set[str] = set()
+    for sat_edges in jobs_to_sat_edges.values():
+        for job_to_timeslot_edge in sat_edges:
+            schedulable_jobs.add(job_to_timeslot_edge.job)
+    # Collect all jobs that are impossible to schedule
+    unschedulable_jobs = all_jobs.difference(schedulable_jobs)
+    for job_name in unschedulable_jobs:
+        logger.info(f'{job_name} not schedulable')
+
+    # Collect sink edges and job-to-timeslot edges into lists (instead of dicts)
     sink_edges = [sat_to_sink_edge for sat_edges in sat_to_sink_edges.values() for sat_to_sink_edge in sat_edges]
     job_to_timeslot_edges = [job_to_timeslot_edge for sat_edges in jobs_to_sat_edges.values() for job_to_timeslot_edge in sat_edges]
 
+    # Combine all edges into one big edge list
     graph_edges = source_to_jobs_edges + job_to_timeslot_edges + sink_edges
 
     # Add edges with capacities to the graph
@@ -562,33 +510,29 @@ def main():
     logger.info(f'Finding the maximum flow took {graph_t1 - graph_t0} seconds')
 
     # Get the optimal edges from the graph
-    # new_source_edges, new_sat_edges, new_sat_to_sink_edges = \
     optimal_edges = \
         extract_optimal_edges(flow_dict, jobs, satellites)
+
+    # Unpack optimal edges
     new_source_edges = optimal_edges.sourceToJobEdges
     new_sat_edges = optimal_edges.jobToSatelliteTimeSlotEdges
     new_sat_to_sink_edges = optimal_edges.satelliteTimeSlotToSinkEdges
 
-    new_job_to_timeslot_edges = []
-    for sat_edges in jobs_to_sat_edges.values():
+    # Collect all jobs that have been scheduled
+    scheduled_jobs: Set[str] = set()
+    for sat_edges in new_sat_edges.values():
         for job_to_timeslot_edge in sat_edges:
-            new_job_to_timeslot_edges.append(job_to_timeslot_edge)
-
-    all_jobs = set([job.name for job in jobs])
-    scheduled_jobs = set()
-
-    for job_timeslot in new_job_to_timeslot_edges:
-        scheduled_jobs.add(job_timeslot[0])
-        logger.info(f'{job_timeslot[0]} at {job_timeslot[1]}')
-
+            scheduled_jobs.add(job_to_timeslot_edge.job)
+            logger.info(f'{job_to_timeslot_edge.job} scheduled at {job_to_timeslot_edge.satellite_timeslot}')
+    # Collect all jobs that are impossible to schedule
     unscheduled_jobs = all_jobs.difference(scheduled_jobs)
+    for job_name in unschedulable_jobs:
+        logger.info(f'{job_name} not scheduled')
 
-    for unscheduled_job in unscheduled_jobs:
-        logger.info(f'{unscheduled_job} not scheduled')
+    logger.info(f'Out of {len(all_jobs)} jobs, {len(scheduled_jobs)} were scheduled, {len(unscheduled_jobs)} were not, ({len(unschedulable_jobs)} jobs were not possible to be scheduled)')
+    logger.info(f'Total runtime (without plotting): {sum([tree_t1-tree_t0, graph_t1-graph_t0])}')
 
-    logger.info(f'Out of {len(all_jobs)} jobs, {len(scheduled_jobs)} were scheduled, {len(unscheduled_jobs)} were not')
-    logger.info(f'Total runtime (without plotting): {sum([parse_t1-parse_t0, tree_t1-tree_t0, graph_t1-graph_t0])}')
-
+    # Plot all possible scheduling opportunities as network flow graph
     plot(
         G,
         trees,
@@ -600,6 +544,7 @@ def main():
         'All Possible Scheduling Opportunities'
     )
 
+    # Plot optimal schedule as network flow graph
     plot(
         G,
         trees,
@@ -611,6 +556,5 @@ def main():
         'Maximum Flow Optimal Schedule'
     )
 
-
-if __name__ == '__main__':
-    main()
+    # Format and return solution
+    return format_solution(satellites, new_sat_edges)
