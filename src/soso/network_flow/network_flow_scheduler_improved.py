@@ -32,7 +32,6 @@ Threshold for the degrees above the horizontal for a satellite to be considered
 to have a point on Earth in its field-of-view.
 '''
 
-logging.config.fileConfig('logging_config.ini')
 logger: logging.Logger = logging.getLogger(__name__)
 
 
@@ -412,7 +411,7 @@ def format_solution(
     return solution
 
 
-def run(
+def run_network_flow(
     satellites: List[EarthSatellite],
     jobs: List[Job],
     outage_requests: List[OutageRequest],
@@ -435,7 +434,18 @@ def run(
 
         eph: The Skyfield ephemeris data being used to perform astronomical
         calculations.
+
+    Returns:
+        A dictionary mapping each satellite to a list, where items in the list
+        are representations of a job scheduled in a time slot.
     '''
+
+    logger.info('Starting network flow algorithm')
+
+    # Empty jobs edge case
+    if len(jobs) == 0:
+        logger.info('Empty jobs list, returning early')
+        return {sat: [] for sat in satellites}
 
     tree_t0 = time.time()
 
@@ -454,7 +464,7 @@ def run(
     trees = generate_trees(satellites, jobs, outage_requests, t0, t1, eph)
 
     tree_t1 = time.time()
-    logger.info(f'Making the interval tree took {tree_t1 - tree_t0} seconds')
+    logger.debug(f'Making the interval tree took {tree_t1 - tree_t0} seconds')
 
     graph_t0 = time.time()
 
@@ -479,7 +489,7 @@ def run(
     # Collect all jobs that are impossible to schedule
     unschedulable_jobs = all_jobs.difference(schedulable_jobs)
     for job_name in unschedulable_jobs:
-        logger.info(f'{job_name} not schedulable')
+        logger.debug(f'{job_name} not schedulable')
 
     # Collect job-to-timeslot edges and sink edges into lists (instead of dicts)
     job_to_timeslot_edges = [
@@ -504,11 +514,20 @@ def run(
     source = 'source'
     sink = 'sink'
 
-    # Calculate the maximum flow and the flow on each edge
-    flow_value, flow_dict = nx.maximum_flow(G, source, sink)
+    try:
+        # Calculate the maximum flow and the flow on each edge
+        flow_value, flow_dict = nx.maximum_flow(G, source, sink)
+    except nx.exception.NetworkXError as e:
+        # Sometimes we get the exception that the sink node is not in the graph.
+        # In this scenario, it means that there are no edges from the any of the
+        # satellite time slots to the sink, so no schedule is possible. We
+        # handle that error gracefully here.
+        logger.error(f'networkx exception: returning early')
+        logger.error(f'networkx exception: {e}')
+        return {sat: [] for sat in satellites}
 
     graph_t1 = time.time()
-    logger.info(f'Finding the maximum flow took {graph_t1 - graph_t0} seconds')
+    logger.debug(f'Finding the maximum flow took {graph_t1 - graph_t0} seconds')
 
     # Get the optimal edges from the graph
     optimal_edges = \
@@ -524,11 +543,11 @@ def run(
     for sat_edges in new_sat_edges.values():
         for job_to_timeslot_edge in sat_edges:
             scheduled_jobs.add(job_to_timeslot_edge.job)
-            logger.info(f'{job_to_timeslot_edge.job} scheduled at {job_to_timeslot_edge.satellite_timeslot}')
+            logger.debug(f'{job_to_timeslot_edge.job} scheduled at {job_to_timeslot_edge.satellite_timeslot}')
     # Collect all jobs that are impossible to schedule
     unscheduled_jobs = all_jobs.difference(scheduled_jobs)
     for job_name in unscheduled_jobs:
-        logger.info(f'{job_name} not scheduled')
+        logger.debug(f'{job_name} not scheduled')
 
     logger.info(f'Out of {len(all_jobs)} jobs, {len(scheduled_jobs)} were scheduled, {len(unscheduled_jobs)} were not, ({len(unschedulable_jobs)} jobs were not possible to be scheduled)')
     logger.info(f'Total runtime (without plotting): {sum([tree_t1-tree_t0, graph_t1-graph_t0])}')
