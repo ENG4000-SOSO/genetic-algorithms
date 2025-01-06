@@ -53,12 +53,12 @@ from soso.network_flow.network_flow_scheduler_improved import run_network_flow
 from soso.outage_request import OutageRequest
 
 
-POPULATION_SIZE = 30
+POPULATION_SIZE = 10
 '''
 The number of problem instances to be considering at any given time.
 '''
 
-GENERATIONS = 20
+GENERATIONS = 10
 '''
 The number of iterations of the genetic algorithm.
 '''
@@ -158,7 +158,7 @@ def generate_population(
     for _ in range(POPULATION_SIZE):
         # Each individual's genome is a list of 0's with a few 1's
         genome = [0] * len(jobs)
-        number_of_ones = random.randint(1, 5)
+        number_of_ones = random.randint(1, len(jobs) - 1)
         random_indexes = random.sample(range(len(jobs)), number_of_ones)
 
         for index in random_indexes:
@@ -217,6 +217,7 @@ def fitness(
             for satellite, job_to_timeslot_edges in solution.items()
     ]
     variance = np.var(jobs_in_each_satellite)
+    sigmoid_variance = 1.0 / (1.0 + np.exp(-variance))
 
     # Calculate the weighted sum of the priorities of all jobs
     total_job_priority_sum = sum(
@@ -236,7 +237,7 @@ def fitness(
         return 0.0
 
     return float(
-        (total_scheduled_job_priority_sum / total_job_priority_sum) - variance
+        (total_scheduled_job_priority_sum / total_job_priority_sum) - sigmoid_variance
     )
 
 
@@ -417,8 +418,6 @@ def run_genetic_algorithm(
     )
 
     for generation in range(GENERATIONS):
-        logger.info(f'Generation {generation}')
-
         # Make sure all individuals have a fitness metric
         for individual in population:
             if not individual.fitness:
@@ -432,6 +431,8 @@ def run_genetic_algorithm(
                 # Make sure the best individual is not None
                 best_individual = individual
                 best_fitness = individual.fitness
+
+        logger.info(f'Generation: {generation}, best fitness: {best_fitness}')
 
         # Generate a new population by selecting parents, crossing over genomes,
         # and mutating genomes
