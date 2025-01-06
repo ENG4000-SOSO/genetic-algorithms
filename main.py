@@ -34,7 +34,7 @@ parse_t1 = time.time()
 logger.info(f'Parsing data took {parse_t1 - parse_t0} seconds')
 
 # solution = run_network_flow(satellites, jobs, outage_requests, ts, eph)
-solution = soso.genetic.genetic_scheduler.run_genetic_algorithm()
+solution = soso.genetic.genetic_scheduler.run_genetic_algorithm(satellites, jobs, outage_requests, ts, eph)
 
 for satellite, job_to_satellite_time_slots in solution.items():
     print(f'Satellite: {satellite.name}')

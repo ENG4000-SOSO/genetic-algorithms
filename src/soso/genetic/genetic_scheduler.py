@@ -40,28 +40,25 @@ scheduled, priorities of jobs scheduled, and variance of space resource use.
 
 from dataclasses import dataclass
 import logging
-import os
-from pathlib import Path
 import random
 import time
 from typing import Dict, List, Literal, Optional, Tuple
 
 import numpy as np
-from skyfield.api import EarthSatellite, load, Loader, Timescale
+from skyfield.api import EarthSatellite, Loader, Timescale
 
 from soso.job import Job
 from soso.network_flow.edge_types import JobToSatelliteTimeSlotEdge
 from soso.network_flow.network_flow_scheduler_improved import run_network_flow
 from soso.outage_request import OutageRequest
-from soso.utils import parse_jobs, parse_outage_requests, parse_satellites
 
 
-POPULATION_SIZE = 10
+POPULATION_SIZE = 30
 '''
 The number of problem instances to be considering at any given time.
 '''
 
-GENERATIONS = 10
+GENERATIONS = 20
 '''
 The number of iterations of the genetic algorithm.
 '''
@@ -128,11 +125,23 @@ class Individual:
     '''
 
 
-def generate_population(ts: Timescale) -> Tuple[ProblemInstance, List[Individual]]:
+def generate_population(
+    satellites: List[EarthSatellite],
+    jobs: List[Job],
+    outage_requests: List[OutageRequest],
+    ts: Timescale
+) -> Tuple[ProblemInstance, List[Individual]]:
     '''
     Generates an initial population.
 
     Args:
+        satellites: The list of satellites to be scheduled with jobs and outage
+        requests.
+
+        jobs: The list of jobs to be scheduled.
+
+        outage_requests: The list of (non-negotiable) outage requests.
+
         ts: The Skyfield timescale being used to simulate events in the future.
 
     Returns:
@@ -141,19 +150,7 @@ def generate_population(ts: Timescale) -> Tuple[ProblemInstance, List[Individual
         in the population.
     '''
 
-    # Define directories containing the satellites and orders data
-    project_dir = Path(os.path.dirname(__file__)).parent.parent.parent
-    data_dir = project_dir / 'data'
-    order_data_dir = data_dir / 'orders'
-    satellite_data_dir = data_dir / 'satellites'
-    outage_request_data_dir = data_dir / 'outages'
-
-    # Parse satellites, jobs, and outage requests data
-    satellites = parse_satellites(satellite_data_dir, ts)
-    jobs = parse_jobs(order_data_dir)
-    outage_requests = parse_outage_requests(outage_request_data_dir, satellites)
-
-    # Pack into problem instance
+    # Pack satellites, jobs, and outage requests into problem instance
     problem_instance = ProblemInstance(satellites, jobs, outage_requests)
 
     # Generate individuals in the population
@@ -368,9 +365,29 @@ def mutate(
     return individual
 
 
-def run_genetic_algorithm() -> Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]:
+def run_genetic_algorithm(
+    satellites: List[EarthSatellite],
+    jobs: List[Job],
+    outage_requests: List[OutageRequest],
+    ts: Timescale,
+    eph: Loader
+) -> Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]:
     '''
-    Runs the genetic algorithm.
+    The main entry point to the genetic algorithm part of the SOSO scheduling
+    algorithm.
+
+    Args:
+        satellites: The list of satellites to be scheduled with jobs and outage
+        requests.
+
+        jobs: The list of jobs to be scheduled.
+
+        outage_requests: The list of (non-negotiable) outage requests.
+
+        ts: The Skyfield timescale being used to simulate events in the future.
+
+        eph: The Skyfield ephemeris data being used to perform astronomical
+        calculations.
 
     Returns:
         A dictionary mapping each satellite to a list, where items in the list
@@ -392,10 +409,12 @@ def run_genetic_algorithm() -> Dict[EarthSatellite, List[JobToSatelliteTimeSlotE
     The best individual's fitness score.
     '''
 
-    ts = load.timescale()
-    eph = load('de421.bsp')
-
-    problem_instance, population = generate_population(ts)
+    problem_instance, population = generate_population(
+        satellites,
+        jobs,
+        outage_requests,
+        ts
+    )
 
     for generation in range(GENERATIONS):
         logger.info(f'Generation {generation}')
