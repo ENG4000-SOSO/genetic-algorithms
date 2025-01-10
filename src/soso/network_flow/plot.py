@@ -8,7 +8,7 @@ SOSO optimization problem, which is useful for debugging.
 
 from typing import Dict, List
 
-from intervaltree import IntervalTree
+from intervaltree import Interval
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
@@ -26,7 +26,7 @@ from soso.network_flow.edge_types import \
 @debug
 def plot(
         G: nx.DiGraph,
-        trees: Dict[EarthSatellite, IntervalTree],
+        satellite_intervals: Dict[EarthSatellite, List[Interval]],
         jobs: List[Job],
         satellites: List[EarthSatellite],
         source_edges: List[SourceToJobEdge],
@@ -40,7 +40,8 @@ def plot(
     Args:
         G: The `networkx` graph of the flow network.
 
-        trees: The `dict` of interval trees (each satellite's interval tree).
+        satellite_intervals: The dictionary of satellite's intervals (each
+        satellite's list of intervals).
 
         jobs: The full list of jobs.
 
@@ -66,8 +67,8 @@ def plot(
             'b': jobs,
             'c': [
                 SatelliteTimeSlot(sat, interval.begin, interval.end)
-                    for sat, tree in trees.items()
-                        for interval in tree
+                    for sat, interval in satellite_intervals.items()
+                        for interval in interval
             ],
             'd': ['sink']
         }
@@ -95,11 +96,11 @@ def plot(
 
     nx.draw_networkx_nodes(G, pos, nodelist=[job for job in jobs], node_color=jobs_color, node_size = 5)
 
-    nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, tree in trees.items() for interval in tree if sat.name == 'SOSO-1'], node_color=soso1_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, tree in trees.items() for interval in tree if sat.name == 'SOSO-2'], node_color=soso2_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, tree in trees.items() for interval in tree if sat.name == 'SOSO-3'], node_color=soso3_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, tree in trees.items() for interval in tree if sat.name == 'SOSO-4'], node_color=soso4_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, tree in trees.items() for interval in tree if sat.name == 'SOSO-5'], node_color=soso5_color, node_size = 5, edgecolors='black', linewidths=0.1)
+    nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-1'], node_color=soso1_color, node_size = 5, edgecolors='black', linewidths=0.1)
+    nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-2'], node_color=soso2_color, node_size = 5, edgecolors='black', linewidths=0.1)
+    nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-3'], node_color=soso3_color, node_size = 5, edgecolors='black', linewidths=0.1)
+    nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-4'], node_color=soso4_color, node_size = 5, edgecolors='black', linewidths=0.1)
+    nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-5'], node_color=soso5_color, node_size = 5, edgecolors='black', linewidths=0.1)
 
     nx.draw_networkx_nodes(G, pos, nodelist=['source'], node_color=source_color, node_size = 15, edgecolors='black', linewidths=0.75)
     nx.draw_networkx_nodes(G, pos, nodelist=['sink'], node_color=sink_color, node_size = 15)

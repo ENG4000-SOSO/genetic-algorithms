@@ -10,7 +10,7 @@ import logging.config
 import time
 from typing import cast, Dict, List, Set
 
-from intervaltree import IntervalTree
+from intervaltree import Interval, IntervalTree
 import networkx as nx
 from skyfield.api import EarthSatellite, Loader, Time, Timescale, wgs84
 
@@ -238,7 +238,7 @@ def generate_trees(
 
 
 def generate_initial_graph_edges(
-        trees: Dict[EarthSatellite, IntervalTree],
+        satellite_intervals: Dict[EarthSatellite, List[Interval]],
         jobs: List[Job],
         satellites: List[EarthSatellite]
     ) -> Edges:
@@ -253,7 +253,8 @@ def generate_initial_graph_edges(
         - one edge from each satellite timeslot to the sink node.
 
     Args:
-        trees: The `dict` mapping each satellite to its interval tree.
+        satellite_intervals: The dictionary mapping each satellite to its list
+        of schedulable intervals.
 
         jobs: The full list of jobs.
 
@@ -290,8 +291,8 @@ def generate_initial_graph_edges(
     sat_edges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]] = {
         sat: [] for sat in satellites
     }
-    for sat, tree in trees.items():
-        for interval in tree:
+    for sat, intervals in satellite_intervals.items():
+        for interval in intervals:
             for job in interval.data:
                 sat_edges[sat].append(
                     JobToSatelliteTimeSlotEdge(
@@ -305,8 +306,8 @@ def generate_initial_graph_edges(
     sat_to_sink_edges: Dict[EarthSatellite, List[SatelliteTimeSlotToSinkEdge]] = {
         sat: [] for sat in satellites
     }
-    for sat, tree in trees.items():
-        for interval in tree:
+    for sat, intervals in satellite_intervals.items():
+        for interval in intervals:
             sat_to_sink_edges[sat].append(
                 SatelliteTimeSlotToSinkEdge(
                     SatelliteTimeSlot(sat, interval.begin, interval.end),
@@ -411,16 +412,17 @@ def format_solution(
     return solution
 
 
-def run_network_flow(
+def generate_satellite_intervals(
     satellites: List[EarthSatellite],
     jobs: List[Job],
     outage_requests: List[OutageRequest],
     ts: Timescale,
     eph: Loader
-) -> Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]:
+) -> Dict[EarthSatellite, List[Interval]]:
     '''
-    The main entry point to the network flow part of the SOSO scheduling
-    algorithm.
+    Generates intervals for each satellite where each interval contains a set of
+    jobs that can be chosen to be scheduled between the interval's start and end
+    times.
 
     Args:
         satellites: The list of satellites to be scheduled with jobs and outage
@@ -437,10 +439,11 @@ def run_network_flow(
 
     Returns:
         A dictionary mapping each satellite to a list, where items in the list
-        are representations of a job scheduled in a time slot.
+        are intervals. Each interval has a `begin` and an `end` time properties,
+        and a `data` property that is a set of jobs that can be scheduled in that
+        interval (only one job in the set will be chosen to be scheduled in the
+        interval).
     '''
-
-    logger.info('Starting network flow algorithm')
 
     # Empty jobs edge case
     if len(jobs) == 0:
@@ -449,32 +452,66 @@ def run_network_flow(
 
     tree_t0 = time.time()
 
-    # Set of all jobs, will be used later
-    all_jobs = set([job for job in jobs])
-
-    # === DEFINE START AND END TIMES ===
+    # Define start and end times.
     # The scheduling will cover the start of the earliest job to the end of the
-    # latest job
-    t0 = ts.from_datetime(min(job.start for job in jobs).replace(tzinfo=timezone.utc))
-    t1 = ts.from_datetime(max(job.end for job in jobs).replace(tzinfo=timezone.utc))
+    # latest job.
+    t0 = ts.from_datetime(
+        min(job.start for job in jobs).replace(tzinfo=timezone.utc)
+    )
+    t1 = ts.from_datetime(
+        max(job.end for job in jobs).replace(tzinfo=timezone.utc)
+    )
 
-    # === GENERATE INTERVAL TREES ===
+    # Generate interval trees.
     # One interval tree per satellite, where each interval in the tree holds the
-    # jobs that could be scheduled in that interval
+    # jobs that could be scheduled in that interval.
     trees = generate_trees(satellites, jobs, outage_requests, t0, t1, eph)
 
     tree_t1 = time.time()
-    logger.debug(f'Making the interval tree took {tree_t1 - tree_t0} seconds')
+    logger.debug(f'Making the interval trees took {tree_t1 - tree_t0} seconds')
+
+    # Convert the interval trees to lists of intervals to simplify the interface
+    return {sat: cast(List[Interval], list(tree)) for sat, tree in trees.items()}
+
+
+def run_network_flow(
+    satellites: List[EarthSatellite],
+    jobs: List[Job],
+    satellite_intervals: Dict[EarthSatellite, List[Interval]]
+) -> Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]:
+    '''
+    The main entry point to the network flow part of the SOSO scheduling
+    algorithm.
+
+    Args:
+        satellites: The list of satellites to be scheduled with jobs and outage
+        requests.
+
+        jobs: The list of jobs to be scheduled.
+
+        satellite_intervals: The dictionary mapping each satellite to its list
+        of schedulable intervals.
+
+    Returns:
+        A dictionary mapping each satellite to a list, where items in the list
+        are representations of a job scheduled in a time slot.
+    '''
+
+    logger.info('Starting network flow algorithm')
+
+    alg_t0 = time.time()
+
+    # Set of all jobs, will be used later
+    all_jobs = set([job for job in jobs])
 
     graph_t0 = time.time()
 
-    # === MODELING PROBLEM AS GRAPH AND GETTING MAXIMUM FLOW ===
     # Create an empty directed graph
     G = nx.DiGraph()
 
     # Generate edges for the graph
     edges = \
-        generate_initial_graph_edges(trees, jobs, satellites)
+        generate_initial_graph_edges(satellite_intervals, jobs, satellites)
 
     # Unpack edges
     source_to_jobs_edges = edges.sourceToJobEdges
@@ -543,19 +580,30 @@ def run_network_flow(
     for sat_edges in new_sat_edges.values():
         for job_to_timeslot_edge in sat_edges:
             scheduled_jobs.add(job_to_timeslot_edge.job)
-            logger.debug(f'{job_to_timeslot_edge.job} scheduled at {job_to_timeslot_edge.satellite_timeslot}')
+            logger.debug(
+                f'{job_to_timeslot_edge.job} scheduled at '
+                    f'{job_to_timeslot_edge.satellite_timeslot}'
+            )
+
     # Collect all jobs that are impossible to schedule
     unscheduled_jobs = all_jobs.difference(scheduled_jobs)
     for job_name in unscheduled_jobs:
         logger.debug(f'{job_name} not scheduled')
 
-    logger.info(f'Out of {len(all_jobs)} jobs, {len(scheduled_jobs)} were scheduled, {len(unscheduled_jobs)} were not, ({len(unschedulable_jobs)} jobs were not possible to be scheduled)')
-    logger.info(f'Total runtime (without plotting): {sum([tree_t1-tree_t0, graph_t1-graph_t0])}')
+    alg_t1 = time.time()
+
+    logger.info(
+        f'Out of {len(all_jobs)} jobs, {len(scheduled_jobs)} were '
+            f'scheduled, {len(unscheduled_jobs)} were not, '
+            f'({len(unschedulable_jobs)} jobs were not possible to be '
+            'scheduled)'
+    )
+    logger.info(f'Total runtime (without plotting): {alg_t1 - alg_t0}')
 
     # Plot all possible scheduling opportunities as network flow graph
     plot(
         G,
-        trees,
+        satellite_intervals,
         jobs,
         satellites,
         source_to_jobs_edges,
@@ -567,7 +615,7 @@ def run_network_flow(
     # Plot optimal schedule as network flow graph
     plot(
         G,
-        trees,
+        satellite_intervals,
         jobs,
         satellites,
         new_source_edges,
@@ -579,3 +627,33 @@ def run_network_flow(
     # Format and return solution
     # return format_solution(satellites, new_sat_edges)
     return new_sat_edges
+
+# def run_network_flow(
+#     satellites: List[EarthSatellite],
+#     jobs: List[Job],
+#     outage_requests: List[OutageRequest],
+#     ts: Timescale,
+#     eph: Loader
+# ) -> Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]:
+#     '''
+#     The main entry point to the network flow part of the SOSO scheduling
+#     algorithm.
+
+#     Args:
+#         satellites: The list of satellites to be scheduled with jobs and outage
+#         requests.
+
+#         jobs: The list of jobs to be scheduled.
+
+#         outage_requests: The list of (non-negotiable) outage requests.
+
+#         ts: The Skyfield timescale being used to simulate events in the future.
+
+#         eph: The Skyfield ephemeris data being used to perform astronomical
+#         calculations.
+
+#     Returns:
+#         A dictionary mapping each satellite to a list, where items in the list
+#         are representations of a job scheduled in a time slot.
+#     '''
+#     pass
