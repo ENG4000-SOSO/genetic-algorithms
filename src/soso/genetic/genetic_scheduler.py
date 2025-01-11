@@ -3,14 +3,26 @@ The genetic algorithm aspect of the SOSO solution to the job-satellite
 scheduling project.
 
 The algorithm starts with a population. Each individual of the population is an
-instance of the scheduling problem: a set of jobs and a set of satellites. The
-algorithm proceeds in the following steps:
+instance of the scheduling problem: a set of jobs and a set of satellites.
+Individuals are represented by their `genome`.
+
+An individual's genome is is a dictionary from satellites to a list of lists of
+bits (0 or 1). This genome directly corresponds to the `satellite_intervals`
+data structure, where satellites are mapped to lists of intervals, and each
+interval contains a begin time, end time, and a list of jobs to be scheduled.
+
+If `genome[satellite][i][j] == 1`, that means for this particular individual,
+the `j`-th job in the `i`-th interval of `satellite` can be scheduled. If it is
+0, the job cannot be scheduled. Therefore, an individual's genome effectively
+encodes which jobs are restricted in each satellite.
+
+The algorithm proceeds in the following steps:
 
 1. Two individuals are selected from the population. Individuals with a higher
 `fitness` have a higher chance of being selected.
 
 2. The selected individuals are possibly `crossed-over`, as in parts of their
-instances are mixed with each other to make a new `offspring` instance. The
+genomes are mixed with each other to make a new `offspring` instance. The
 decision to perform this crossover depends on the `crossover rate`, which is a
 hyperparameter.
 
@@ -45,8 +57,9 @@ import time
 from typing import Dict, List, Literal, Optional, Tuple
 
 import numpy as np
-from skyfield.api import EarthSatellite, Loader, Timescale
+from skyfield.api import EarthSatellite
 
+from soso.interval_tree import SatelliteInterval
 from soso.job import Job
 from soso.network_flow.edge_types import JobToSatelliteTimeSlotEdge
 from soso.network_flow.network_flow_scheduler_improved import run_network_flow
@@ -58,22 +71,28 @@ POPULATION_SIZE = 10
 The number of problem instances to be considering at any given time.
 '''
 
-GENERATIONS = 10
+GENERATIONS = 100
 '''
 The number of iterations of the genetic algorithm.
 '''
 
-CROSSOVER_RATE = 0.05
+CROSSOVER_RATE = 0.75
 '''
 The crossover rate influences the chance of two selected individuals in a
 population 'crossing over' to make a new individual.
 '''
 
-MUTATION_RATE = 0.001
+MUTATION_RATE = 0.01
 '''
 The mutation rate influences the chance of random mutations in individuals,
 which means the restriction or un-restriction of random jobs from being
 scheduled.
+'''
+
+INITIAL_ENABLE_PROBABILITY = 0.05
+'''
+The probability of enabling each job in an individual's genome when the initial
+population is being generated.
 '''
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -100,36 +119,147 @@ class ProblemInstance:
     The list of outage requests to be scheduled into satellites.
     '''
 
+    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]]
+    '''
+    The dictionary mapping satellites to intervals, where each interval has a
+    beginning time, ending tme, and a list of jobs.
+    '''
 
-@dataclass
+
 class Individual:
     '''
     An individual in the population of the genetic algorithm.
     '''
 
-    genome: List[Literal[0, 1]]
+    __genome: Dict[EarthSatellite, List[List[Literal[0, 1]]]]
     '''
-    The individual's genome.
-
-    If `genome[i] == 0`, then the job at `problem_instance.jobs[i]` is
-    restricted from being scheduled. Otherwise, if `genome[i] == 1` then the job
-    at `problem_instance.jobs[i]` is not restricted and will be considered by
-    the network flow scheduling algorithm.
+    Private variable containing the individual's genome.
     '''
 
-    fitness: Optional[float] = None
+    __problem_instance: ProblemInstance
     '''
-    The fitness of the individual.
+    Private variable containing the problem instance for the algorithm. This
+    should be the same for every individual in the population (it just contains
+    the full list of satellites, jobs, and satellite intervals).
+    '''
 
-    For the calculation of fitness, see the function `fitness` below.
+    __fitness: Optional[float] = None
     '''
+    Private variable containing the fitness of the individual.
+
+    If the fitness has not yet been calculated, this property will be `None`.
+    '''
+
+    def __init__(self, genome: Dict[EarthSatellite, List[List[Literal[0, 1]]]], problem_instance: ProblemInstance):
+        self.__genome = genome
+        self.__problem_instance = problem_instance
+        self.__fitness = None
+
+    @property
+    def genome(self) -> Dict[EarthSatellite, List[List[Literal[0, 1]]]]:
+        '''
+        The individual's genome.
+
+        This is a property instead of a class variable to ensure it is never
+        modified.
+        '''
+        return self.__genome
+
+    @property
+    def problem_instance(self) -> ProblemInstance:
+        '''
+        The problem instance for all individuals.
+
+        This is a property instead of a class variable to ensure it is never
+        modified.
+        '''
+        return self.__problem_instance
+
+    @property
+    def fitness(self) -> float:
+        '''
+        The fitness of the individual.
+
+        This is a property instead of a class variable so that computations can
+        be performed to compute the fitness on-demand.
+        '''
+
+        # If the fitness has already been calculated, save some resources and
+        # just return it
+        if self.__fitness is not None:
+            return self.__fitness
+
+        # Generate the satellite intervals corresponding to the jobs that are
+        # enabled in the individual's genome
+        satellite_intervals = {
+            sat: [
+                SatelliteInterval(
+                    interval.begin,
+                    interval.end,
+                    [job for job, bit in zip(interval.data, chromosome) if bit == 1]
+                )
+                for interval, chromosome in zip(intervals, chromosomes)
+            ]
+            for sat, (intervals, chromosomes) in zip(
+                self.problem_instance.satellite_intervals.keys(),
+                zip(
+                    self.problem_instance.satellite_intervals.values(),
+                    self.genome.values()
+                )
+            )
+        }
+
+        # Run the network flow optimization scheduling algorithm to get the best
+        # solution given non-restricted jobs
+        solution = run_network_flow(
+            self.problem_instance.satellites,
+            self.problem_instance.jobs,
+            satellite_intervals
+        )
+
+        # Calculate the variance of the amount of jobs scheduled in each satellite
+        jobs_in_each_satellite = [
+            len(job_to_timeslot_edges)
+                for satellite, job_to_timeslot_edges in solution.items()
+        ]
+        variance = np.var(jobs_in_each_satellite)
+        sigmoid_variance = 1.0 / (1.0 + np.exp(-variance))
+
+        # Calculate the weighted sum of the priorities of all jobs
+        total_job_priority_sum = sum(
+            int(job.priority.value) for job in self.problem_instance.jobs
+        )
+
+        # Calculate the weighted sum of the priorities of all jobs that were
+        # scheduled
+        total_scheduled_job_priority_sum = sum(
+            job_to_timeslot_edge.job.priority.value
+                for satellite, job_to_timeslot_edges in solution.items()
+                    for job_to_timeslot_edge in job_to_timeslot_edges
+        )
+
+        if total_job_priority_sum == 0 or sigmoid_variance == 0:
+            # Returning 0 here to avoid division by zero exception
+            return 0.0
+
+        # Weighted-percentage of jobs scheduled (the weights are the job
+        # priorities)
+        P = (total_scheduled_job_priority_sum / total_job_priority_sum)
+
+        # Smaller variance is better, so normalize by using 1-variance
+        V = 1 - variance
+
+        # Fitness formula (still being tweaked)
+        self.__fitness = 750 * P + 15 * V
+
+        return self.__fitness
 
 
 def generate_population(
     satellites: List[EarthSatellite],
     jobs: List[Job],
     outage_requests: List[OutageRequest],
-    ts: Timescale
+    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]]
 ) -> Tuple[ProblemInstance, List[Individual]]:
     '''
     Generates an initial population.
@@ -142,7 +272,8 @@ def generate_population(
 
         outage_requests: The list of (non-negotiable) outage requests.
 
-        ts: The Skyfield timescale being used to simulate events in the future.
+        satellite_intervals: The dictionary mapping each satellite to its list
+        of schedulable intervals.
 
     Returns:
         A tuple containing the problem instance (which has a list of satellites,
@@ -151,94 +282,29 @@ def generate_population(
     '''
 
     # Pack satellites, jobs, and outage requests into problem instance
-    problem_instance = ProblemInstance(satellites, jobs, outage_requests)
+    problem_instance = ProblemInstance(
+        satellites,
+        jobs,
+        outage_requests,
+        satellite_intervals
+    )
 
     # Generate individuals in the population
     population: List[Individual] = []
+
     for _ in range(POPULATION_SIZE):
-        # Each individual's genome is a list of 0's with a few 1's
-        genome = [0] * len(jobs)
-        number_of_ones = random.randint(1, len(jobs) - 1)
-        random_indexes = random.sample(range(len(jobs)), number_of_ones)
+        genome = {
+            sat: [
+                [0 if random.random() > INITIAL_ENABLE_PROBABILITY else 1 for job in interval.data]
+                for interval in intervals
+            ]
+            for sat, intervals in satellite_intervals.items()
+        }
 
-        for index in random_indexes:
-            genome[index] = 1
-
-        individual = Individual(genome)
+        individual = Individual(genome, problem_instance)
         population.append(individual)
 
     return problem_instance, population
-
-
-def fitness(
-    genome: List[Literal[0, 1]],
-    problem_instance: ProblemInstance,
-    ts: Timescale,
-    eph: Loader
-) -> float:
-    '''
-    Calculates the fitness of an individual's genome.
-
-    Args:
-        genome: The genome to calculate the fitness of.
-
-        problem_instance: The global problem instance.
-
-        ts: The Skyfield timescale being used to simulate events in the future.
-
-        eph: The Skyfield ephemeris data being used to perform astronomical
-        calculations.
-
-    Returns:
-        The fitness of the genome as a floating point number.
-    '''
-
-    # Get all non-restricted jobs
-    jobs = []
-    for i, job in enumerate(problem_instance.jobs):
-        if genome[i] == 1:
-            jobs.append(job)
-        else:
-            pass
-
-    # Run the network flow optimization scheduling algorithm to get the best
-    # solution given non-restricted jobs
-    solution = run_network_flow(
-        problem_instance.satellites,
-        jobs,
-        problem_instance.outage_requests,
-        ts,
-        eph
-    )
-
-    # Calculate the variance of the amount of jobs scheduled in each satellite
-    jobs_in_each_satellite = [
-        len(job_to_timeslot_edges)
-            for satellite, job_to_timeslot_edges in solution.items()
-    ]
-    variance = np.var(jobs_in_each_satellite)
-    sigmoid_variance = 1.0 / (1.0 + np.exp(-variance))
-
-    # Calculate the weighted sum of the priorities of all jobs
-    total_job_priority_sum = sum(
-        int(job.priority.value) for job in problem_instance.jobs
-    )
-
-    # Calculate the weighted sum of the priorities of all jobs that were
-    # scheduled
-    total_scheduled_job_priority_sum = sum(
-        job_to_timeslot_edge.job.priority.value
-            for satellite, job_to_timeslot_edges in solution.items()
-                for job_to_timeslot_edge in job_to_timeslot_edges
-    )
-
-    if total_job_priority_sum == 0:
-        # Returning 0 here to avoid division by zero exception
-        return 0.0
-
-    return float(
-        (total_scheduled_job_priority_sum / total_job_priority_sum) - sigmoid_variance
-    )
 
 
 def select(population: List[Individual]) -> Individual:
@@ -277,9 +343,7 @@ def select(population: List[Individual]) -> Individual:
 def crossover(
     parent1: Individual,
     parent2: Individual,
-    problem_instance: ProblemInstance,
-    ts: Timescale,
-    eph: Loader
+    problem_instance: ProblemInstance
 ) -> Individual:
     '''
     Mix two individuals' genomes, potentially generating a new individual.
@@ -308,28 +372,25 @@ def crossover(
     # Randomly choose whether or not to crossover, depending on the crossover
     # rate
     if random.random() < CROSSOVER_RATE:
-        # Randomly choose an index to slice the genomes
-        n = len(parent1.genome)
-        point = random.randint(1, n - 1)
+        new_genome = {sat: [] for sat in problem_instance.satellites}
+        for sat in problem_instance.satellites:
+            for i in range(len(problem_instance.satellite_intervals[sat])):
+                parent = parent1 if random.random() > 0.5 else parent2
+                new_genome[sat].append(parent.genome[sat][i])
 
-        # Generate a new genome by mixing the first part of the first parent's
-        # genome with the second part of the second parent's genome
-        new_genome = parent1.genome[:point] + parent2.genome[point:]
+        # # Calculate the fitness of the new genome
+        # new_fitness = fitness(new_genome, problem_instance)
 
-        # Calculate the fitness of the new genome
-        new_fitness = fitness(new_genome, problem_instance, ts, eph)
+        # return Individual(new_genome, new_fitness)
+        return Individual(new_genome, problem_instance)
 
-        return Individual(new_genome, new_fitness)
-
-    # If not crossing over, just return the first parent
-    return parent1
+    # If not crossing over, just return one of the parents
+    return parent1 if random.random() > 0.5 else parent2
 
 
 def mutate(
     individual: Individual,
-    problem_instance: ProblemInstance,
-    ts: Timescale,
-    eph: Loader
+    problem_instance: ProblemInstance
 ) -> Individual:
     '''
     Mutate an individual's genome, potentially flipping some of its bits.
@@ -351,27 +412,28 @@ def mutate(
         A new individual with the mutated genome.
     '''
 
-    for i in range(len(individual.genome)):
-        # Randomly choose whether or not to flip a bit in the genome, depending
-        # on the mutation rate
-        if random.random() > MUTATION_RATE:
-            if individual.genome[i] == 1:
-                individual.genome[i] = 0
-            else:
-                individual.genome[i] = 1
+    new_genome = {
+        sat: [
+            [
+                1 - bit if random.random() > MUTATION_RATE else bit
+                    for bit in chromosome
+            ]
+            for chromosome in chromosomes
+        ]
+        for sat, chromosomes in individual.genome.items()
+    }
 
-    # Calculate the fitness of the mutated genome
-    individual.fitness = fitness(individual.genome, problem_instance, ts, eph)
-
-    return individual
+    return Individual(
+        new_genome,
+        individual.problem_instance
+    )
 
 
 def run_genetic_algorithm(
     satellites: List[EarthSatellite],
     jobs: List[Job],
     outage_requests: List[OutageRequest],
-    ts: Timescale,
-    eph: Loader
+    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]]
 ) -> Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]:
     '''
     The main entry point to the genetic algorithm part of the SOSO scheduling
@@ -385,10 +447,8 @@ def run_genetic_algorithm(
 
         outage_requests: The list of (non-negotiable) outage requests.
 
-        ts: The Skyfield timescale being used to simulate events in the future.
-
-        eph: The Skyfield ephemeris data being used to perform astronomical
-        calculations.
+        satellite_intervals: The dictionary mapping each satellite to its list
+        of schedulable intervals.
 
     Returns:
         A dictionary mapping each satellite to a list, where items in the list
@@ -414,19 +474,12 @@ def run_genetic_algorithm(
         satellites,
         jobs,
         outage_requests,
-        ts
+        satellite_intervals
     )
 
     for generation in range(GENERATIONS):
         # Make sure all individuals have a fitness metric
         for individual in population:
-            if not individual.fitness:
-                individual.fitness = fitness(
-                    individual.genome,
-                    problem_instance,
-                    ts,
-                    eph
-                )
             if not best_individual:
                 # Make sure the best individual is not None
                 best_individual = individual
@@ -440,8 +493,8 @@ def run_genetic_algorithm(
         for _ in range(POPULATION_SIZE):
             parent1 = select(population)
             parent2 = select(population)
-            offspring = crossover(parent1, parent2, problem_instance, ts, eph)
-            mutated_offspring = mutate(offspring, problem_instance, ts, eph)
+            offspring = crossover(parent1, parent2, problem_instance)
+            mutated_offspring = mutate(offspring, problem_instance)
             new_population.append(mutated_offspring)
 
         # Replace the original population with the new population
@@ -461,12 +514,19 @@ def run_genetic_algorithm(
     # problem instance and the best individual's genome
     return run_network_flow(
         problem_instance.satellites,
-        [
-            job
-                for i, job in enumerate(problem_instance.jobs)
-                    if best_individual.genome[i] == 1
-        ],
-        problem_instance.outage_requests,
-        ts,
-        eph
+        jobs,
+        {
+            sat: [
+                SatelliteInterval(
+                    interval.begin,
+                    interval.end,
+                    [job for job, bit in zip(interval.data, chromosome) if bit == 1]
+                )
+                for interval, chromosome in zip(intervals, chromosomes)
+            ]
+            for sat, (intervals, chromosomes) in zip(
+                problem_instance.satellite_intervals.keys(),
+                zip(problem_instance.satellite_intervals.values(), best_individual.genome.values())
+            )
+        }
     )

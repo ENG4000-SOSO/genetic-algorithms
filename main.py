@@ -8,8 +8,9 @@ import time
 from skyfield.api import load
 
 import soso.genetic.genetic_scheduler
-from soso.network_flow.network_flow_scheduler_improved import run_network_flow, generate_satellite_intervals
+from soso.network_flow.network_flow_scheduler_improved import run_network_flow
 from soso.utils import parse_jobs, parse_outage_requests, parse_satellites
+from soso.interval_tree import generate_satellite_intervals
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -42,8 +43,8 @@ satellite_intervals = generate_satellite_intervals(
     eph
 )
 
-solution = run_network_flow(satellites, jobs, satellite_intervals)
-# solution = soso.genetic.genetic_scheduler.run_genetic_algorithm(satellites, jobs, outage_requests, ts, eph)
+# solution = run_network_flow(satellites, jobs, satellite_intervals)
+solution = soso.genetic.genetic_scheduler.run_genetic_algorithm(satellites, jobs, outage_requests, satellite_intervals)
 
 for satellite, job_to_satellite_time_slots in solution.items():
     print(f'Satellite: {satellite.name}')
