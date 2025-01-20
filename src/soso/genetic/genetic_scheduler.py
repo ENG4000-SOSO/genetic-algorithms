@@ -359,11 +359,6 @@ def crossover(
 
         problem_instance: The global problem instance.
 
-        ts: The Skyfield timescale being used to simulate events in the future.
-
-        eph: The Skyfield ephemeris data being used to perform astronomical
-        calculations.
-
     Returns:
         Either a new individual that is a combination of the two parents, or one
         of the parents, depending (randomly) on the crossover rate.
@@ -402,11 +397,6 @@ def mutate(
         individual: The individual whose genome is being mutated.
 
         problem_instance: The global problem instance.
-
-        ts: The Skyfield timescale being used to simulate events in the future.
-
-        eph: The Skyfield ephemeris data being used to perform astronomical
-        calculations.
 
     Returns:
         A new individual with the mutated genome.

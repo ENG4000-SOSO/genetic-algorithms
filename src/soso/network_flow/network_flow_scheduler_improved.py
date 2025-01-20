@@ -12,7 +12,7 @@ from typing import Dict, List, Set
 import networkx as nx
 from skyfield.api import EarthSatellite
 
-from soso.interval_tree import SatelliteInterval
+from soso.interval_tree import GroundStationPassInterval, SatelliteInterval
 from soso.job import Job
 from soso.network_flow.edge_types import \
     Edges, \
@@ -150,7 +150,8 @@ def extract_optimal_edges(
 def run_network_flow(
     satellites: List[EarthSatellite],
     jobs: List[Job],
-    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]]
+    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
+    ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]]
 ) -> Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]:
     '''
     The main entry point to the network flow part of the SOSO scheduling
@@ -164,6 +165,9 @@ def run_network_flow(
 
         satellite_intervals: The dictionary mapping each satellite to its list
         of schedulable intervals.
+
+        ground_station_passes: The dictionary mapping each satellite to its list
+        of ground station passes.
 
     Returns:
         A dictionary mapping each satellite to a list, where items in the list
