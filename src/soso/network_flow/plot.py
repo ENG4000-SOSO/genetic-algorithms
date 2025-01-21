@@ -6,7 +6,9 @@ SOSO optimization problem, which is useful for debugging.
 '''
 
 
-from typing import Dict, List
+import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
 
 from intervaltree import Interval
 import matplotlib.pyplot as plt
@@ -15,24 +17,30 @@ import numpy as np
 from skyfield.api import EarthSatellite
 
 from soso.debug import debug
+from soso.interval_tree import GroundStationPassInterval, SatelliteInterval
 from soso.job import Job
-from soso.network_flow.edge_types import \
+from soso.network_flow import \
+    GroundStationPassTimeSlot, \
+    GroundStationPassToSinkEdge, \
     JobToSatelliteTimeSlotEdge, \
     SatelliteTimeSlot, \
-    SatelliteTimeSlotToSinkEdge, \
+    SatelliteTimeSlotToGroundStationPassEdge, \
     SourceToJobEdge
 
 
 @debug
 def plot(
         G: nx.DiGraph,
-        satellite_intervals: Dict[EarthSatellite, List[Interval]],
+        satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
+        ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]],
         jobs: List[Job],
         satellites: List[EarthSatellite],
         source_edges: List[SourceToJobEdge],
-        sat_edges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]],
-        sat_to_sink_edges: Dict[EarthSatellite, List[SatelliteTimeSlotToSinkEdge]],
-        title: str
+        job_to_sat_edges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]],
+        sat_to_ground_station_edges: Dict[EarthSatellite, List[SatelliteTimeSlotToGroundStationPassEdge]],
+        ground_station_to_sink_edges: Dict[EarthSatellite, List[GroundStationPassToSinkEdge]],
+        title: str,
+        debug_mode: Optional[Path | bool] = None    
     ) -> None:
     '''
     Plots a flow network representing jobs scheduled into satellites.
@@ -43,19 +51,29 @@ def plot(
         satellite_intervals: The dictionary of satellite's intervals (each
         satellite's list of intervals).
 
+        ground_station_passes: The dictionary of each satellite's ground station
+        passes.
+
         jobs: The full list of jobs.
 
         satellites: The full list of satellites.
 
-        source_edges: Edges in the graph from source to jobs. Tuples are of the
-            form `(sink, job, flow)`.
+        source_edges: Edges in the graph from source to jobs.
 
-        sat_edges: Edges in the graph from job to satellite timeslot for each
-            satellite. Tuples are of the form `(job, satellite_timeslot, flow)`.
+        job_to_sat_edges: Edges in the graph from job to satellite timeslot for
+        each satellite.
 
-        sat_to_sink_edges: Edges in the graph from satellite timeslot to sink
-            for each satellite. Tuples are of the form
-            `(satellite_timeslot, sink, flow)`.
+        sat_to_ground_station_edges: Edges in the graph from satellite timeslot
+        to ground station pass.
+
+        ground_station_to_sink_edges: Edges in the graph from ground station to
+        sink.
+
+        title: The title of the plot.
+
+        debug_mode: The debug mode. Either a `Path` (which will place output
+        images in that directory), `True`, which will display output images to
+        the user, or `None`, which will not show or save images at all.
     '''
 
     fig, ax = plt.subplots()
@@ -67,10 +85,20 @@ def plot(
             'b': jobs,
             'c': [
                 SatelliteTimeSlot(sat, interval.begin, interval.end)
-                    for sat, interval in satellite_intervals.items()
-                        for interval in interval
+                    for sat, intervals in satellite_intervals.items()
+                        for interval in intervals
             ],
-            'd': ['sink']
+            'd': [
+                GroundStationPassTimeSlot(
+                    sat,
+                    interval.ground_station,
+                    interval.begin,
+                    interval.end
+                )
+                    for sat, intervals in ground_station_passes.items()
+                        for interval in intervals
+            ],
+            'e': ['sink']
         }
     )
 
@@ -80,6 +108,8 @@ def plot(
             return np.array((coords[0], coords[1]*5))
         elif isinstance(x, SatelliteTimeSlot):
             return np.array((coords[0], coords[1]*1.2))
+        elif isinstance(x, GroundStationPassTimeSlot):
+            return np.array((coords[0], coords[1]*10))
         else:
             return np.array((coords[0], coords[1]))
 
@@ -102,22 +132,34 @@ def plot(
     nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-4'], node_color=soso4_color, node_size = 5, edgecolors='black', linewidths=0.1)
     nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-5'], node_color=soso5_color, node_size = 5, edgecolors='black', linewidths=0.1)
 
+    nx.draw_networkx_nodes(G, pos, nodelist=[GroundStationPassTimeSlot(sat, interval.ground_station, interval.begin, interval.end) for sat, interval in ground_station_passes.items() for interval in interval if sat.name == 'SOSO-1'], node_color=soso1_color, node_size = 5, edgecolors='black', linewidths=0.1)
+    nx.draw_networkx_nodes(G, pos, nodelist=[GroundStationPassTimeSlot(sat, interval.ground_station, interval.begin, interval.end) for sat, interval in ground_station_passes.items() for interval in interval if sat.name == 'SOSO-2'], node_color=soso2_color, node_size = 5, edgecolors='black', linewidths=0.1)
+    nx.draw_networkx_nodes(G, pos, nodelist=[GroundStationPassTimeSlot(sat, interval.ground_station, interval.begin, interval.end) for sat, interval in ground_station_passes.items() for interval in interval if sat.name == 'SOSO-3'], node_color=soso3_color, node_size = 5, edgecolors='black', linewidths=0.1)
+    nx.draw_networkx_nodes(G, pos, nodelist=[GroundStationPassTimeSlot(sat, interval.ground_station, interval.begin, interval.end) for sat, interval in ground_station_passes.items() for interval in interval if sat.name == 'SOSO-4'], node_color=soso4_color, node_size = 5, edgecolors='black', linewidths=0.1)
+    nx.draw_networkx_nodes(G, pos, nodelist=[GroundStationPassTimeSlot(sat, interval.ground_station, interval.begin, interval.end) for sat, interval in ground_station_passes.items() for interval in interval if sat.name == 'SOSO-5'], node_color=soso5_color, node_size = 5, edgecolors='black', linewidths=0.1)
+
     nx.draw_networkx_nodes(G, pos, nodelist=['source'], node_color=source_color, node_size = 15, edgecolors='black', linewidths=0.75)
     nx.draw_networkx_nodes(G, pos, nodelist=['sink'], node_color=sink_color, node_size = 15)
 
     nx.draw_networkx_edges(G, pos, edgelist=source_edges, edge_color=jobs_color, arrows=False)
 
-    nx.draw_networkx_edges(G, pos, edgelist=sat_edges[satellites[0]], edge_color=soso1_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_edges[satellites[1]], edge_color=soso2_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_edges[satellites[2]], edge_color=soso3_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_edges[satellites[3]], edge_color=soso4_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_edges[satellites[4]], edge_color=soso5_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=job_to_sat_edges[satellites[0]], edge_color=soso1_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=job_to_sat_edges[satellites[1]], edge_color=soso2_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=job_to_sat_edges[satellites[2]], edge_color=soso3_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=job_to_sat_edges[satellites[3]], edge_color=soso4_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=job_to_sat_edges[satellites[4]], edge_color=soso5_color, arrows=False)
 
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[0]], edge_color=soso1_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[1]], edge_color=soso2_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[2]], edge_color=soso3_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[3]], edge_color=soso4_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[4]], edge_color=soso5_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=sat_to_ground_station_edges[satellites[0]], edge_color=soso1_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=sat_to_ground_station_edges[satellites[1]], edge_color=soso2_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=sat_to_ground_station_edges[satellites[2]], edge_color=soso3_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=sat_to_ground_station_edges[satellites[3]], edge_color=soso4_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=sat_to_ground_station_edges[satellites[4]], edge_color=soso5_color, arrows=False)
+
+    nx.draw_networkx_edges(G, pos, edgelist=ground_station_to_sink_edges[satellites[0]], edge_color=soso1_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=ground_station_to_sink_edges[satellites[1]], edge_color=soso2_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=ground_station_to_sink_edges[satellites[2]], edge_color=soso3_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=ground_station_to_sink_edges[satellites[3]], edge_color=soso4_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=ground_station_to_sink_edges[satellites[4]], edge_color=soso5_color, arrows=False)
 
     plt.title(title)
     # Create a custom legend
@@ -136,7 +178,8 @@ def plot(
     plt.text(0.95, 0.495, 'sink', transform=ax.transAxes)
     plt.text(0.01, 0.02, 'Flow Source\n(Conceptual)', transform=ax.transAxes)
     plt.text(0.34, 0.02, 'Jobs', transform=ax.transAxes)
-    plt.text(0.62, 0.02, 'Satellite\nTime Slots', transform=ax.transAxes)
+    plt.text(0.62, 0.02, 'Satellite Job\nTime Slots', transform=ax.transAxes)
+    plt.text(0.8, 0.02, 'Ground Station\nPass Time Slots', transform=ax.transAxes)
     plt.text(0.9, 0.02, 'Flow Sink\n(Conceptual)', transform=ax.transAxes)
 
     # Add the legend to the axis
@@ -144,4 +187,9 @@ def plot(
     ax.legend(handles=legend_elements_2, loc='upper right')
     ax.add_artist(legend_1)
 
-    plt.show()
+    if isinstance(debug_mode, Path):
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
+        filename = f'{timestamp}_{title}.png'
+        plt.savefig(debug_mode / filename)
+    elif debug_mode:
+        plt.show()

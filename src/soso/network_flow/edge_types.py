@@ -10,17 +10,75 @@ from typing import Any, cast, List, Dict, NamedTuple
 
 from skyfield.api import EarthSatellite
 
-from soso.job import Job
+from soso.job import GroundStation, Job
 
 
 @dataclass(frozen=True)
 class SatelliteTimeSlot:
+    '''
+    Representation of a satellite time slot, which contains a satellite, a start
+    time, and an end time.
+    '''
+
     satellite: EarthSatellite
+    '''
+    The satellite for which the time slot is represented for.
+    '''
+
     start: datetime
+    '''
+    The start time of the time slot.
+    '''
+
     end: datetime
+    '''
+    The end time of the time slot.
+    '''
 
     def __hash__(self):
+        '''
+        Hash method is overridden so that satellite time slots with the same
+        properties are equal.
+        '''
+
         return hash((self.satellite, self.start, self.end))
+
+
+@dataclass(frozen=True)
+class GroundStationPassTimeSlot:
+    '''
+    Representation of a time slot where a satellite passes over a ground
+    station. This contains a satellite, ground station, start time, and end
+    time.
+    '''
+
+    satellite: EarthSatellite
+    '''
+    The satellite that is passing over the ground station in this time slot.
+    '''
+
+    ground_station: GroundStation
+    '''
+    The ground station being passed over in this time slot.
+    '''
+
+    start: datetime
+    '''
+    The start time of the time slot.
+    '''
+
+    end: datetime
+    '''
+    The end time of the time slot.
+    '''
+
+    def __hash__(self):
+        '''
+        Hash method is overridden so that ground station pass time slots with
+        the same properties are equal.
+        '''
+
+        return hash((self.satellite, self.ground_station, self.start, self.end))
 
 
 class GraphEdge(NamedTuple):
@@ -104,20 +162,46 @@ class JobToSatelliteTimeSlotEdge(GraphEdge):
         return self.f
 
 
-class SatelliteTimeSlotToSinkEdge(GraphEdge):
+class SatelliteTimeSlotToGroundStationPassEdge(GraphEdge):
     '''
-    Representation of a graph edge connecting a job node to a satellite time
-    slot node.
+    Representation of a graph edge connecting a satellite time slot node to a
+    ground station pass node.
     '''
 
     @property
     def satellite_timeslot(self) -> SatelliteTimeSlot:
         '''
-        The satellite time slot node of the edge. This will be the string
-        representation of an interval (with a start and end datetime) for a
-        satellite.
+        The satellite time slot node of the edge.
         '''
         return cast(SatelliteTimeSlot, self.u)
+
+    @property
+    def ground_station(self) -> GroundStationPassTimeSlot:
+        '''
+        The ground station node of the edge.
+        '''
+        return cast(GroundStationPassTimeSlot, self.v)
+
+    @property
+    def flow(self) -> int:
+        '''
+        The flow across the edge.
+        '''
+        return self.f
+
+
+class GroundStationPassToSinkEdge(GraphEdge):
+    '''
+    Representation of a graph edge connecting a ground station pass node to a
+    sink node.
+    '''
+
+    @property
+    def ground_station(self) -> GroundStationPassTimeSlot:
+        '''
+        The ground station node of the edge.
+        '''
+        return cast(GroundStationPassTimeSlot, self.u)
 
     @property
     def sink(self) -> str:
@@ -153,8 +237,14 @@ class Edges:
     jobs to time slots for the satellite.
     '''
 
-    satelliteTimeSlotToSinkEdges: Dict[EarthSatellite, List[SatelliteTimeSlotToSinkEdge]]
+    satelliteTimeSlotToGroundStationPassEdge: Dict[EarthSatellite, List[SatelliteTimeSlotToGroundStationPassEdge]]
     '''
     A dictionary that maps each satellite to a list of edges. The edges are from
-    time slots for that satellite to the sink node.
+    time slots for that satellite to ground station passes for that satellite.
+    '''
+
+    groundStationPassToSinkEdge: Dict[EarthSatellite, List[GroundStationPassToSinkEdge]]
+    '''
+    A dictionary that maps each satellite to a list of edges. The edges are from
+    ground station passes for that satellite to the sink node.
     '''

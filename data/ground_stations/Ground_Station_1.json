@@ -1,0 +1,9 @@
+{
+    "name": "Inuvik",
+    "latitude": 68.3195,
+    "longitude": -133.549,
+    "height": 102.5,
+    "mask": 5,
+    "uplink_rate": 40000,
+    "downlink_rate": 100000000
+}
