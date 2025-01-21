@@ -195,12 +195,12 @@ def find_pass_events(
 
 
 def generate_ground_station_pass_intervals(
-        satellites: List[EarthSatellite],
-        ground_stations: List[GroundStation],
-        t0: Time,
-        t1: Time,
-        eph: Loader
-    ) -> Dict[EarthSatellite, List[GroundStationPassInterval]]:
+    satellites: List[EarthSatellite],
+    ground_stations: List[GroundStation],
+    t0: Time,
+    t1: Time,
+    eph: Loader
+) -> Dict[EarthSatellite, List[GroundStationPassInterval]]:
     '''
     Generates intervals for each satellite where each interval contains a ground
     station that the satellite passes over between the interval's start and end
@@ -244,13 +244,13 @@ def generate_ground_station_pass_intervals(
 
 
 def update_trees_with_jobs(
-        trees: Dict[EarthSatellite, IntervalTree],
-        sat: EarthSatellite,
-        job: Job,
-        t0: Time,
-        t1: Time,
-        eph: Loader
-    ) -> None:
+    trees: Dict[EarthSatellite, IntervalTree],
+    sat: EarthSatellite,
+    job: Job,
+    t0: Time,
+    t1: Time,
+    eph: Loader
+) -> None:
     '''
     Updates interval tree of then given satellite, if possible, with the given
     job.
@@ -281,13 +281,13 @@ def update_trees_with_jobs(
 
 
 def generate_trees(
-        satellites: List[EarthSatellite],
-        jobs: List[Job],
-        outage_requests: List[OutageRequest],
-        t0: Time,
-        t1: Time,
-        eph: Loader
-    ) -> Dict[EarthSatellite, IntervalTree]:
+    satellites: List[EarthSatellite],
+    jobs: List[Job],
+    outage_requests: List[OutageRequest],
+    t0: Time,
+    t1: Time,
+    eph: Loader
+) -> Dict[EarthSatellite, IntervalTree]:
     '''
     Generates interval trees for each satellite representing schedulable jobs.
 
@@ -421,6 +421,44 @@ def convert_trees_to_satellite_intervals(
     return satellite_intervals
 
 
+def filter_unschedulable_timeslots(
+    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
+    ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]]
+) -> Dict[EarthSatellite, List[SatelliteInterval]]:
+    '''
+    Filters out satellite intervals that cannot be downlinked in a ground
+    station pass.
+
+    Args:
+        satellite_intervals: Dictionary mapping each satellite to intervals.
+
+        ground_station_passes: Dictionary mapping each satellite to a ground
+        station passes.
+
+    Returns:
+        Satellite intervals that can be downlinked by a ground station pass.
+    '''
+
+    new_satellite_intervals = {sat: [] for sat in satellite_intervals.keys()}
+
+    for sat, intervals in satellite_intervals.items():
+        for interval in intervals:
+            schedulable = False
+            for ground_station_pass in ground_station_passes[sat]:
+                if interval.end < ground_station_pass.begin:
+                    schedulable = True
+                    break
+            if schedulable:
+                new_satellite_intervals[sat].append(interval)
+            else:
+                logger.debug(
+                    f'Removing Interval {interval} because there are no ground '
+                        'station passes for it'
+                )
+
+    return new_satellite_intervals
+
+
 def generate_satellite_intervals(
     satellites: List[EarthSatellite],
     jobs: List[Job],
@@ -487,8 +525,13 @@ def generate_satellite_intervals(
     logger.debug(f'Making the interval trees took {tree_t1 - tree_t0} seconds')
 
     # Convert the interval trees to lists of intervals to simplify the interface
-    satellite_intervals = \
+    unfiltered_satellite_intervals = \
         convert_trees_to_satellite_intervals(satellites, trees)
+
+    satellite_intervals = filter_unschedulable_timeslots(
+        unfiltered_satellite_intervals,
+        ground_station_passes
+    )
 
     # Return satellite intervals and ground station passes in a DTO
     return SatellitePasses(satellite_intervals, ground_station_passes)

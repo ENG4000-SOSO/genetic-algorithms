@@ -52,6 +52,7 @@ scheduled, priorities of jobs scheduled, and variance of space resource use.
 
 from dataclasses import dataclass
 import logging
+from pathlib import Path
 import random
 import time
 from typing import Dict, List, Literal, Optional, Tuple
@@ -59,7 +60,8 @@ from typing import Dict, List, Literal, Optional, Tuple
 import numpy as np
 from skyfield.api import EarthSatellite
 
-from soso.interval_tree import SatelliteInterval
+from soso.debug import debug
+from soso.interval_tree import SatelliteInterval, GroundStationPassInterval
 from soso.job import Job
 from soso.network_flow.edge_types import JobToSatelliteTimeSlotEdge
 from soso.network_flow.network_flow_scheduler_improved import run_network_flow
@@ -124,6 +126,43 @@ class ProblemInstance:
     The dictionary mapping satellites to intervals, where each interval has a
     beginning time, ending tme, and a list of jobs.
     '''
+
+    ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]]
+    '''
+    '''
+
+
+def get_satellite_intervals_from_genome(
+    problem_instance: ProblemInstance,
+    genome: Dict[EarthSatellite, List[List[Literal[0, 1]]]]
+) -> Dict[EarthSatellite, List[SatelliteInterval]]:
+    '''
+    Gets satellite intervals that are enabled in the genome.
+
+    Args:
+        problem_instance: The problem instance of the algorithm.
+
+        genome: The genome being used to filter satellite intervals.
+
+    Returns:
+        The dictionary mapping satellites to lists of intervals, where each
+        interval has jobs enabled according to the genome.
+    '''
+
+    return {
+        sat: [
+            SatelliteInterval(
+                interval.begin,
+                interval.end,
+                [job for job, bit in zip(interval.data, chromosome) if bit == 1]
+            )
+            for interval, chromosome in zip(intervals, chromosomes)
+        ]
+        for sat, (intervals, chromosomes) in zip(
+            problem_instance.satellite_intervals.keys(),
+            zip(problem_instance.satellite_intervals.values(), genome.values())
+        )
+    }
 
 
 class Individual:
@@ -191,30 +230,18 @@ class Individual:
 
         # Generate the satellite intervals corresponding to the jobs that are
         # enabled in the individual's genome
-        satellite_intervals = {
-            sat: [
-                SatelliteInterval(
-                    interval.begin,
-                    interval.end,
-                    [job for job, bit in zip(interval.data, chromosome) if bit == 1]
-                )
-                for interval, chromosome in zip(intervals, chromosomes)
-            ]
-            for sat, (intervals, chromosomes) in zip(
-                self.problem_instance.satellite_intervals.keys(),
-                zip(
-                    self.problem_instance.satellite_intervals.values(),
-                    self.genome.values()
-                )
-            )
-        }
+        satellite_intervals = get_satellite_intervals_from_genome(
+            self.problem_instance,
+            self.genome
+        )
 
         # Run the network flow optimization scheduling algorithm to get the best
         # solution given non-restricted jobs
         solution = run_network_flow(
             self.problem_instance.satellites,
             self.problem_instance.jobs,
-            satellite_intervals
+            satellite_intervals,
+            self.problem_instance.ground_station_passes
         )
 
         # Calculate the variance of the amount of jobs scheduled in each satellite
@@ -255,11 +282,42 @@ class Individual:
         return self.__fitness
 
 
+@debug
+def debug_genetic_info(
+    individual: Individual
+) -> None:
+    '''
+    Debugs information about the given individual.
+
+    Args:
+        individual: The individual being analyzed.
+    '''
+
+    # Directory where debug images will be stored
+    DEBUG_DIR = Path.cwd() / 'debug'
+    DEBUG_DIR.mkdir(exist_ok=True)
+
+    satellite_intervals = get_satellite_intervals_from_genome(
+        individual.problem_instance,
+        individual.genome
+    )
+
+    # Run network flow algorithm to get debug images
+    run_network_flow(
+        individual.problem_instance.satellites,
+        individual.problem_instance.jobs,
+        satellite_intervals,
+        individual.problem_instance.ground_station_passes,
+        DEBUG_DIR
+    )
+
+
 def generate_population(
     satellites: List[EarthSatellite],
     jobs: List[Job],
     outage_requests: List[OutageRequest],
-    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]]
+    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
+    ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]]
 ) -> Tuple[ProblemInstance, List[Individual]]:
     '''
     Generates an initial population.
@@ -275,6 +333,9 @@ def generate_population(
         satellite_intervals: The dictionary mapping each satellite to its list
         of schedulable intervals.
 
+        ground_station_passes: The dictionary mapping each satellite to its list
+        of ground station passes.
+
     Returns:
         A tuple containing the problem instance (which has a list of satellites,
         a list of jobs, and a list of outage requests) and a list of individuals
@@ -286,7 +347,8 @@ def generate_population(
         satellites,
         jobs,
         outage_requests,
-        satellite_intervals
+        satellite_intervals,
+        ground_station_passes
     )
 
     # Generate individuals in the population
@@ -384,8 +446,7 @@ def crossover(
 
 
 def mutate(
-    individual: Individual,
-    problem_instance: ProblemInstance
+    individual: Individual
 ) -> Individual:
     '''
     Mutate an individual's genome, potentially flipping some of its bits.
@@ -395,8 +456,6 @@ def mutate(
 
     Args:
         individual: The individual whose genome is being mutated.
-
-        problem_instance: The global problem instance.
 
     Returns:
         A new individual with the mutated genome.
@@ -423,7 +482,8 @@ def run_genetic_algorithm(
     satellites: List[EarthSatellite],
     jobs: List[Job],
     outage_requests: List[OutageRequest],
-    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]]
+    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
+    ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]]
 ) -> Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]:
     '''
     The main entry point to the genetic algorithm part of the SOSO scheduling
@@ -439,6 +499,9 @@ def run_genetic_algorithm(
 
         satellite_intervals: The dictionary mapping each satellite to its list
         of schedulable intervals.
+
+        ground_station_passes: The dictionary mapping each satellite to its list
+        of ground station passes.
 
     Returns:
         A dictionary mapping each satellite to a list, where items in the list
@@ -464,7 +527,8 @@ def run_genetic_algorithm(
         satellites,
         jobs,
         outage_requests,
-        satellite_intervals
+        satellite_intervals,
+        ground_station_passes
     )
 
     for generation in range(GENERATIONS):
@@ -484,7 +548,7 @@ def run_genetic_algorithm(
             parent1 = select(population)
             parent2 = select(population)
             offspring = crossover(parent1, parent2, problem_instance)
-            mutated_offspring = mutate(offspring, problem_instance)
+            mutated_offspring = mutate(offspring)
             new_population.append(mutated_offspring)
 
         # Replace the original population with the new population
@@ -496,27 +560,23 @@ def run_genetic_algorithm(
                 best_individual = individual
                 best_fitness = individual.fitness
 
+        if best_individual:
+            debug_genetic_info(best_individual)
+
     end_time = time.time()
 
     logger.info(f'Genetic algorithm took {end_time-start_time} seconds')
+
+    best_satellite_intervals = get_satellite_intervals_from_genome(
+        problem_instance,
+        best_individual.genome
+    )
 
     # Run the network flow algorithm one last time to get the solution to the
     # problem instance and the best individual's genome
     return run_network_flow(
         problem_instance.satellites,
-        jobs,
-        {
-            sat: [
-                SatelliteInterval(
-                    interval.begin,
-                    interval.end,
-                    [job for job, bit in zip(interval.data, chromosome) if bit == 1]
-                )
-                for interval, chromosome in zip(intervals, chromosomes)
-            ]
-            for sat, (intervals, chromosomes) in zip(
-                problem_instance.satellite_intervals.keys(),
-                zip(problem_instance.satellite_intervals.values(), best_individual.genome.values())
-            )
-        }
+        problem_instance.jobs,
+        best_satellite_intervals,
+        problem_instance.ground_station_passes
     )

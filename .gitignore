@@ -10,5 +10,8 @@ soso.egg-info/
 # IDE configs
 .vscode/*
 
+# Debugging information
+debug/
+
 # Random files for testing
 QUESTIONS.txt

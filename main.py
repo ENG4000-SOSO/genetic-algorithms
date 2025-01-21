@@ -53,8 +53,8 @@ satellite_passes = generate_satellite_intervals(
 satellite_intervals = satellite_passes.satellite_intervals
 ground_station_passes = satellite_passes.ground_station_passes
 
-# solution = run_network_flow(satellites, jobs, satellite_intervals)
-solution = soso.genetic.genetic_scheduler.run_genetic_algorithm(satellites, jobs, outage_requests, satellite_intervals)
+# solution = run_network_flow(satellites, jobs, satellite_intervals, ground_station_passes, True)
+solution = soso.genetic.genetic_scheduler.run_genetic_algorithm(satellites, jobs, outage_requests, satellite_intervals, ground_station_passes)
 
 for satellite, job_to_satellite_time_slots in solution.items():
     print(f'Satellite: {satellite.name}')
