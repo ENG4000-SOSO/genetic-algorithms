@@ -129,6 +129,8 @@ class ProblemInstance:
 
     ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]]
     '''
+    The dictionary mapping satellites to ground station passes, where each pass
+    has a beginning time, ending tme, and a ground station.
     '''
 
 
