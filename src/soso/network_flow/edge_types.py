@@ -6,11 +6,20 @@ optimization solution to the satellite scheduling problem.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, cast, List, Dict, NamedTuple
+from typing import Any, cast, Dict, List, NamedTuple, TypeAlias, TypeVar
 
 from skyfield.api import EarthSatellite
 
 from soso.job import GroundStation, Job
+
+
+X = TypeVar("X")
+
+SatelliteToList: TypeAlias = Dict[EarthSatellite, List[X]]
+'''
+Type alias representing a mapping (dictionary) of satellites to lists of generic
+parameter `X`.
+'''
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,49 @@ class GroundStationPassTimeSlot:
         '''
 
         return hash((self.satellite, self.ground_station, self.start, self.end))
+
+
+@dataclass(frozen=True)
+class RateLimiter:
+    '''
+    Representation of a rate limiter node.
+
+    'Rate limiter' nodes were added to the network flow graph to prevent
+    satellite timeslots from mapping to multiple ground station passes. This
+    situation is prevented by including the rate limiters as a one-to-one
+    mapping from satellite timeslots to themselves.
+
+    By including these rate limiters, we restrict the flow coming out of
+    satellite timeslot nodes, thereby restricting the number of ground station
+    passes connected to a satellite timeslot.
+    '''
+
+    satellite_timeslot: SatelliteTimeSlot
+    '''
+    The satellite timeslot node that the rate limiter is being applied to.
+    '''
+
+    @property
+    def satellite(self) -> EarthSatellite:
+        '''
+        The satellite for which this rate limiter's time slot is represented
+        for.
+        '''
+        return self.satellite_timeslot.satellite
+
+    @property
+    def start(self) -> datetime:
+        '''
+        The start time of this rate limiter's time slot.
+        '''
+        return self.satellite_timeslot.start
+
+    @property
+    def end(self) -> datetime:
+        '''
+        The end time of this rate limiter's time slot.
+        '''
+        return self.satellite_timeslot.end
 
 
 class GraphEdge(NamedTuple):
@@ -162,7 +214,8 @@ class JobToSatelliteTimeSlotEdge(GraphEdge):
         return self.f
 
 
-class SatelliteTimeSlotToGroundStationPassEdge(GraphEdge):
+
+class SatelliteTimeSlotToRateLimiter(GraphEdge):
     '''
     Representation of a graph edge connecting a satellite time slot node to a
     ground station pass node.
@@ -176,9 +229,38 @@ class SatelliteTimeSlotToGroundStationPassEdge(GraphEdge):
         return cast(SatelliteTimeSlot, self.u)
 
     @property
-    def ground_station(self) -> GroundStationPassTimeSlot:
+    def rate_limiter(self) -> RateLimiter:
         '''
         The ground station node of the edge.
+        '''
+        return cast(RateLimiter, self.v)
+
+    @property
+    def flow(self) -> int:
+        '''
+        The flow across the edge.
+        '''
+        return self.f
+
+
+class RateLimiterEdge(GraphEdge):
+    '''
+    Representation of a graph edge connecting a job node to a satellite time
+    slot node.
+    '''
+
+    @property
+    def rate_limiter(self) -> RateLimiter:
+        '''
+        '''
+        return cast(RateLimiter, self.u)
+
+    @property
+    def ground_station(self) -> GroundStationPassTimeSlot:
+        '''
+        The satellite time slot node of the edge. This will be the string
+        representation of an interval (with a start and end datetime) for a
+        satellite.
         '''
         return cast(GroundStationPassTimeSlot, self.v)
 
@@ -188,7 +270,6 @@ class SatelliteTimeSlotToGroundStationPassEdge(GraphEdge):
         The flow across the edge.
         '''
         return self.f
-
 
 class GroundStationPassToSinkEdge(GraphEdge):
     '''
@@ -231,20 +312,77 @@ class Edges:
     List of edges from the source node to each job.
     '''
 
-    jobToSatelliteTimeSlotEdges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]
+    jobToSatelliteTimeSlotEdges: SatelliteToList[JobToSatelliteTimeSlotEdge]
     '''
     A dictionary that maps each satellite to a list of edges. The edges are from
     jobs to time slots for the satellite.
     '''
 
-    satelliteTimeSlotToGroundStationPassEdge: Dict[EarthSatellite, List[SatelliteTimeSlotToGroundStationPassEdge]]
+    satelliteTimeSlotToRateLimiterEdges: SatelliteToList[SatelliteTimeSlotToRateLimiter]
     '''
     A dictionary that maps each satellite to a list of edges. The edges are from
-    time slots for that satellite to ground station passes for that satellite.
+    time slots for that satellite to rate limiter nodes that restrict the flow
+    to ground stations.
     '''
 
-    groundStationPassToSinkEdge: Dict[EarthSatellite, List[GroundStationPassToSinkEdge]]
+    rateLimiterToGroundStationEdges: SatelliteToList[RateLimiterEdge]
+    '''
+    A dictionary that maps each satellite to a list of edges. The edges are from
+    rate limiter nodes to ground station pass timeslots for the satellite.
+    '''
+
+    groundStationPassToSinkEdge: SatelliteToList[GroundStationPassToSinkEdge]
     '''
     A dictionary that maps each satellite to a list of edges. The edges are from
     ground station passes for that satellite to the sink node.
+    '''
+
+
+@dataclass
+class SolutionTimeSlot:
+    '''
+    A unit of a network flow solution, containing a job, a satellite timeslot
+    for the job to be scheduled in, and a ground station timeslot for the job to
+    be downlinked in.
+    '''
+
+    job: Job
+    '''
+    The job being scheduled.
+    '''
+
+    satelliteTimeSlot: SatelliteTimeSlot
+    '''
+    The satellite timeslot that the job will be scheduled in.
+    '''
+
+    groundStationPassTimeSlot: GroundStationPassTimeSlot
+    '''
+    The timeslot for the ground station pass where the job will be downlinked.
+    '''
+
+
+@dataclass
+class NetworkFlowSolution:
+    '''
+    A representation of the full network flow solution.
+    '''
+
+    solutionTimeSlots: SatelliteToList[SolutionTimeSlot]
+    '''
+    A mapping of each satellite to a list of timeslots containing jobs and
+    information on when those jobs will be performed and downlinked.
+    '''
+
+    satelliteTimeSlots: SatelliteToList[JobToSatelliteTimeSlotEdge]
+    '''
+    A mapping of each satellite to a list of edges from the optimal network flow
+    graph, where the edges connect job and satellite timeslot nodes.
+    '''
+
+    groundStationPassTimeSlots: SatelliteToList[GroundStationPassToSinkEdge]
+    '''
+    A mapping of each satellite to a list of edges from the optimal network flow
+    graph, where the edges connect a ground station pass timeslot to the sink
+    node.
     '''

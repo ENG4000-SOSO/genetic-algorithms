@@ -12,10 +12,10 @@ import datetime
 import logging
 import logging.config
 import time
-from typing import cast, Dict, List, Set, Tuple
+from typing import Any, cast, Dict, List, Optional, Set, Tuple
 
 from intervaltree import IntervalTree
-from skyfield.api import EarthSatellite, Loader, Time, Timescale, wgs84
+from skyfield.api import EarthSatellite, Time, Timescale, wgs84
 
 from soso.debug import debug
 from soso.interval_tree import GroundStationPassInterval, SatelliteInterval
@@ -131,8 +131,8 @@ def find_pass_events(
     satellite_pass_location: SatellitePassLocation,
     t0: Time,
     t1: Time,
-    eph: Loader
-) -> List[Tuple[float, float]]:
+    eph: Any
+) -> List[Tuple[datetime.datetime, datetime.datetime]]:
     '''
     Finds events of when a satellite passes over a location on Earth.
 
@@ -157,7 +157,7 @@ def find_pass_events(
     '''
 
     # Initialize list of events
-    found_events: List[Tuple[float, float]] = []
+    found_events: List[Tuple[datetime.datetime, datetime.datetime]] = []
 
     # Location to be imaged
     location = wgs84.latlon(
@@ -174,16 +174,17 @@ def find_pass_events(
 
     # Check which of the imaging times are in sunlight
     sunlit = sat.at(t).is_sunlit(eph)
-    start = None
+    start: Optional[datetime.datetime] = None
+    end: Optional[datetime.datetime] = None
 
     for ti, event, sunlit_flag in zip(t, events, sunlit):
         if sunlit_flag:
             if event == 0:
-                start = ti.utc_datetime()
+                start = cast(datetime.datetime, ti.utc_datetime())
             elif event == 2:
                 if not start:
                     continue
-                end = ti.utc_datetime()
+                end = cast(datetime.datetime, ti.utc_datetime())
                 found_events.append((start, end))
                 start = None
                 end = None
@@ -199,7 +200,7 @@ def generate_ground_station_pass_intervals(
     ground_stations: List[GroundStation],
     t0: Time,
     t1: Time,
-    eph: Loader
+    eph: Any
 ) -> Dict[EarthSatellite, List[GroundStationPassInterval]]:
     '''
     Generates intervals for each satellite where each interval contains a ground
@@ -249,7 +250,7 @@ def update_trees_with_jobs(
     job: Job,
     t0: Time,
     t1: Time,
-    eph: Loader
+    eph: Any
 ) -> None:
     '''
     Updates interval tree of then given satellite, if possible, with the given
@@ -286,7 +287,7 @@ def generate_trees(
     outage_requests: List[OutageRequest],
     t0: Time,
     t1: Time,
-    eph: Loader
+    eph: Any
 ) -> Dict[EarthSatellite, IntervalTree]:
     '''
     Generates interval trees for each satellite representing schedulable jobs.
@@ -465,7 +466,7 @@ def generate_satellite_intervals(
     outage_requests: List[OutageRequest],
     ground_stations: List[GroundStation],
     ts: Timescale,
-    eph: Loader
+    eph: Any
 ) -> SatellitePasses:
     '''
     Generates intervals for each satellite where each interval contains a set of
@@ -498,7 +499,10 @@ def generate_satellite_intervals(
     # Empty jobs edge case
     if len(jobs) == 0:
         logger.info('Empty jobs list, returning early')
-        return {sat: [] for sat in satellites}
+        return SatellitePasses(
+            {sat: [] for sat in satellites},
+            {sat: [] for sat in satellites}
+        )
 
     tree_t0 = time.time()
 

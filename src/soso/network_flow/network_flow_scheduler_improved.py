@@ -1,6 +1,57 @@
 '''
 Main functionality for the network flow optimization solution to the
 job-satellite scheduling problem.
+
+The network flow algorithm is applied here to produce an optimal schedule. To do
+this, we model the schedule as a directed graph, where an edge between two nodes
+means one node can be scheduled 'within' another.
+
+There are five types of nodes in this graph:
+
+- Source node: This is a conceptual node where flow is produced. There is only
+  one source node in this graph, so all flow in the graph flows from this one
+  node.
+
+- Job nodes: These nodes represent jobs in the schedule. There is an edge with a
+  capacity of 1 between the source node and each job node. This edge effectively
+  allows each job to be scheduled by using its 1 unit of flow to connect to
+  timeslots.
+
+- Satellite timeslot nodes: These nodes represent a timeslot in a satellite. An
+  edge between a job and a satellite timeslot node means that the job can be
+  completed in the timeslot by the satellite. A single job can have many edges
+  to different satellite timeslots, but only has 1 unit of flow flowing into it,
+  so it can only have one edge to a satellite timeslot in the optimized graph.
+
+- Rate limiter edges: These nodes are conceptual nodes that limit the flow
+  flowing out of a satellite timeslot node. There is one rate limiter node for
+  each satellite timeslot. They connect together with an edge of capacity 1,
+  ensuring that each satellite timeslot has 1 unit of flow flowing out of it.
+  This prevents a single satellite timeslot from being connected to multiple
+  ground station pass timeslots.
+
+- Ground station pass timeslots: These nodes represent timeslots where a
+  satellite can perform a downlink at a ground station. An edge between a
+  satellite timeslot and a ground station pass timeslot means that the job
+  performed in the satellite timeslot can be downlinked by that satellite at the
+  specified ground station during the ground station timeslot.
+
+- Sink node: This is a conceptual node where flow is consumed. There is only one
+  sink node in this graph, so all flow in the graph flows into this node.
+
+With the exception of the source and sink nodes, the amount of flow entering a
+node must equal the amount of flow leaving that node. A path from source to sink
+represents a job that is scheduled in a satellite timeslot and downlinked in a
+ground station timeslot. The set of all these paths in the optimized flow
+network is the schedule.
+
+The network flow optimization algorithm happens in two main steps: first the
+graph is constructed with nodes and edges with capacities (representing the flow
+each edge can carry). Second, a maximum flow optimization algorithm is applied,
+which 'fills' edges with flow to maximize the amount of flow flowing through the
+graph. There are many such algorithms is provided by the NetworkX Python
+library. Once the maximum flow operation is applied, the edges in the graph can
+be extracted and formatted into a schedule.
 '''
 
 
@@ -8,7 +59,7 @@ import logging
 import logging.config
 from pathlib import Path
 import time
-from typing import Dict, List, Optional, Set, Tuple
+from typing import List, Optional, Set, Tuple
 
 import networkx as nx
 from skyfield.api import EarthSatellite
@@ -21,8 +72,13 @@ from soso.network_flow.edge_types import \
     GroundStationPassTimeSlot, \
     GroundStationPassToSinkEdge, \
     JobToSatelliteTimeSlotEdge, \
+    NetworkFlowSolution, \
+    RateLimiter, \
+    RateLimiterEdge, \
+    SatelliteToList, \
     SatelliteTimeSlot, \
-    SatelliteTimeSlotToGroundStationPassEdge, \
+    SatelliteTimeSlotToRateLimiter, \
+    SolutionTimeSlot, \
     SourceToJobEdge
 from soso.network_flow.plot import plot
 
@@ -46,7 +102,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 def get_scheduled_and_unscheduled_jobs(
     jobs: List[Job],
-    jobs_to_sat_edges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]
+    jobs_to_sat_edges: SatelliteToList[JobToSatelliteTimeSlotEdge]
 ) -> Tuple[Set[Job], Set[Job]]:
     '''
     Gets scheduled and unscheduled jobs given edges in a network flow graph.
@@ -85,8 +141,8 @@ def debug_network_info(
     G: nx.DiGraph,
     unoptimized_edges: Edges,
     optimal_edges: Edges,
-    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
-    ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]],
+    satellite_intervals: SatelliteToList[SatelliteInterval],
+    ground_station_passes: SatelliteToList[GroundStationPassInterval],
     satellites: List[EarthSatellite],
     jobs: List[Job],
     debug_mode: Optional[Path | bool] = None
@@ -118,7 +174,8 @@ def debug_network_info(
     # Unpack unoptimized edges
     source_to_jobs_edges = unoptimized_edges.sourceToJobEdges
     jobs_to_sat_edges = unoptimized_edges.jobToSatelliteTimeSlotEdges
-    sat_to_ground_pass_edges = unoptimized_edges.satelliteTimeSlotToGroundStationPassEdge
+    sat_to_rate_limiter_edges = unoptimized_edges.satelliteTimeSlotToRateLimiterEdges
+    rate_limiter_to_ground_station_edges = unoptimized_edges.rateLimiterToGroundStationEdges
     ground_pass_to_sink_edges = unoptimized_edges.groundStationPassToSinkEdge
 
     schedulable_jobs, unschedulable_jobs = \
@@ -132,7 +189,8 @@ def debug_network_info(
     # Unpack optimal edges
     new_source_edges = optimal_edges.sourceToJobEdges
     new_jobs_to_sat_edges = optimal_edges.jobToSatelliteTimeSlotEdges
-    new_sat_to_ground_pass_edges = optimal_edges.satelliteTimeSlotToGroundStationPassEdge
+    new_sat_to_rate_limiter_edges = optimal_edges.satelliteTimeSlotToRateLimiterEdges
+    new_rate_limiter_to_ground_station_edges = optimal_edges.rateLimiterToGroundStationEdges
     new_ground_pass_to_sink_edges = optimal_edges.groundStationPassToSinkEdge
 
     scheduled_jobs, unscheduled_jobs = \
@@ -159,7 +217,8 @@ def debug_network_info(
         satellites,
         source_to_jobs_edges,
         jobs_to_sat_edges,
-        sat_to_ground_pass_edges,
+        sat_to_rate_limiter_edges,
+        rate_limiter_to_ground_station_edges,
         ground_pass_to_sink_edges,
         'All Possible Scheduling Opportunities',
         debug_mode
@@ -174,7 +233,8 @@ def debug_network_info(
         satellites,
         new_source_edges,
         new_jobs_to_sat_edges,
-        new_sat_to_ground_pass_edges,
+        new_sat_to_rate_limiter_edges,
+        new_rate_limiter_to_ground_station_edges,
         new_ground_pass_to_sink_edges,
         'Maximum Flow Optimal Schedule',
         debug_mode
@@ -182,8 +242,8 @@ def debug_network_info(
 
 
 def generate_initial_graph_edges(
-    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
-    ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]],
+    satellite_intervals: SatelliteToList[SatelliteInterval],
+    ground_station_passes: SatelliteToList[GroundStationPassInterval],
     jobs: List[Job],
     satellites: List[EarthSatellite]
 ) -> Edges:
@@ -223,7 +283,7 @@ def generate_initial_graph_edges(
     #
     # This for loop just creates edges between each job and the intervals that
     # it could be scheduled in.
-    sat_edges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]] = {
+    sat_edges: SatelliteToList[JobToSatelliteTimeSlotEdge] = {
         sat: [] for sat in satellites
     }
     for sat, intervals in satellite_intervals.items():
@@ -237,8 +297,21 @@ def generate_initial_graph_edges(
                     )
                 )
 
+    rate_limiter_edges: SatelliteToList[SatelliteTimeSlotToRateLimiter] = {
+        sat: [] for sat in satellites
+    }
+    for sat, intervals in satellite_intervals.items():
+        for interval in intervals:
+            rate_limiter_edges[sat].append(
+                SatelliteTimeSlotToRateLimiter(
+                    SatelliteTimeSlot(sat, interval.begin, interval.end),
+                    RateLimiter(SatelliteTimeSlot(sat, interval.begin, interval.end)),
+                    1
+                )
+            )
+
     # Edges from satellite job timeslot to ground station pass timeslots
-    sat_to_ground_pass_edges: Dict[EarthSatellite, List[SatelliteTimeSlotToGroundStationPassEdge]] = {
+    sat_to_ground_pass_edges: SatelliteToList[RateLimiterEdge] = {
         sat: [] for sat in satellites
     }
     for sat, intervals in satellite_intervals.items():
@@ -246,8 +319,14 @@ def generate_initial_graph_edges(
             for ground_station_pass in ground_station_passes[sat]:
                 if ground_station_pass.begin > interval.end:
                     sat_to_ground_pass_edges[sat].append(
-                        SatelliteTimeSlotToGroundStationPassEdge(
-                            SatelliteTimeSlot(sat, interval.begin, interval.end),
+                        RateLimiterEdge(
+                            RateLimiter(
+                                SatelliteTimeSlot(
+                                    sat,
+                                    interval.begin,
+                                    interval.end
+                                )
+                            ),
                             GroundStationPassTimeSlot(
                                 sat,
                                 ground_station_pass.ground_station,
@@ -259,7 +338,7 @@ def generate_initial_graph_edges(
                     )
 
     # Edges from ground station pass timeslots to the sink
-    ground_pass_to_sink_edges: Dict[EarthSatellite, List[GroundStationPassToSinkEdge]] = {
+    ground_pass_to_sink_edges: SatelliteToList[GroundStationPassToSinkEdge] = {
         sat: [] for sat in satellites
     }
     for sat, intervals in ground_station_passes.items():
@@ -280,10 +359,10 @@ def generate_initial_graph_edges(
     return Edges(
         source_edges,
         sat_edges,
+        rate_limiter_edges,
         sat_to_ground_pass_edges,
         ground_pass_to_sink_edges
     )
-
 
 def extract_optimal_edges(
     flow_dict: dict,
@@ -295,8 +374,8 @@ def extract_optimal_edges(
 
     Args:
         flow_dict: A `dict` containing the value of the flow through each edge
-            in the graph. This should be returned from the `maximum_flow`
-            function of the `networkx` library.
+        in the graph. This should be returned from the `maximum_flow` function
+        of the `networkx` library.
 
         satellites: The complete list of satellites.
 
@@ -305,13 +384,16 @@ def extract_optimal_edges(
     '''
 
     new_source_edges: List[SourceToJobEdge] = []
-    new_sat_edges: Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]] = {
+    new_sat_edges: SatelliteToList[JobToSatelliteTimeSlotEdge] = {
         sat: [] for sat in satellites
     }
-    new_sat_to_ground_pass_edges: Dict[EarthSatellite, List[SatelliteTimeSlotToGroundStationPassEdge]] = {
+    new_sat_to_rate_limiter: SatelliteToList[SatelliteTimeSlotToRateLimiter] = {
         sat: [] for sat in satellites
     }
-    new_ground_pass_to_sink_edges: Dict[EarthSatellite, List[GroundStationPassToSinkEdge]] = {
+    new_rate_limiters: SatelliteToList[RateLimiterEdge] = {
+        sat: [] for sat in satellites
+    }
+    new_ground_pass_to_sink_edges: SatelliteToList[GroundStationPassToSinkEdge] = {
         sat: [] for sat in satellites
     }
 
@@ -328,8 +410,13 @@ def extract_optimal_edges(
                         )
             elif isinstance(u, SatelliteTimeSlot):
                 if flow > 0:
-                    new_sat_to_ground_pass_edges[u.satellite].append(
-                        SatelliteTimeSlotToGroundStationPassEdge(u, v, flow)
+                    new_sat_to_rate_limiter[u.satellite].append(
+                        SatelliteTimeSlotToRateLimiter(u, v, flow)
+                    )
+            elif isinstance(u, RateLimiter):
+                if flow > 0:
+                    new_rate_limiters[u.satellite_timeslot.satellite].append(
+                        RateLimiterEdge(u, v, flow)
                     )
             elif isinstance(u, GroundStationPassTimeSlot):
                 if flow > 0:
@@ -340,18 +427,75 @@ def extract_optimal_edges(
     return Edges(
         new_source_edges,
         new_sat_edges,
-        new_sat_to_ground_pass_edges,
+        new_sat_to_rate_limiter,
+        new_rate_limiters,
         new_ground_pass_to_sink_edges
+    )
+
+
+def format_solution(
+    satellites: List[EarthSatellite],
+    optimal_edges: Edges
+) -> NetworkFlowSolution:
+    '''
+    Formats the solution to provide a standard interface for modules that use
+    the result of the network flow algorithm.
+
+    Args:
+        satellites: The list of satellites.
+
+        optimal_edges: The optimal edges from the network flow algorithm.
+
+    Returns:
+        A formatted solution to the network flow problem.
+    '''
+
+    output: SatelliteToList[SolutionTimeSlot] = {sat: [] for sat in satellites}
+
+    for sat, edges in optimal_edges.jobToSatelliteTimeSlotEdges.items():
+        for edge in edges:
+            timeslot = edge.satellite_timeslot
+
+            # Find ground station passes associated with the current timeslot
+            ground_station_pass = [rate_limiter_edge.ground_station
+                for rate_limiter_edges in optimal_edges.rateLimiterToGroundStationEdges.values()
+                    for rate_limiter_edge in rate_limiter_edges
+                        if timeslot == rate_limiter_edge.rate_limiter.satellite_timeslot
+            ]
+
+            # Make sure that there is exactly 1 ground station pass for a
+            # timeslot
+            if len(ground_station_pass) == 0:
+                raise Exception(
+                    f' Timeslot {timeslot} has no ground station pass'
+                )
+            elif len(ground_station_pass) > 1:
+                raise Exception(
+                    f'Timeslot {timeslot} has more than one ground station'
+                )
+
+            output[sat].append(
+                SolutionTimeSlot(
+                    edge.job,
+                    edge.satellite_timeslot,
+                    ground_station_pass[0]
+                )
+            )
+
+    return NetworkFlowSolution(
+        output,
+        optimal_edges.jobToSatelliteTimeSlotEdges,
+        optimal_edges.groundStationPassToSinkEdge
     )
 
 
 def run_network_flow(
     satellites: List[EarthSatellite],
     jobs: List[Job],
-    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
-    ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]],
+    satellite_intervals: SatelliteToList[SatelliteInterval],
+    ground_station_passes: SatelliteToList[GroundStationPassInterval],
     debug_mode: Optional[Path | bool] = None
-) -> Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]:
+) -> NetworkFlowSolution:
     '''
     The main entry point to the network flow part of the SOSO scheduling
     algorithm.
@@ -399,7 +543,8 @@ def run_network_flow(
     # Unpack edges
     source_to_jobs_edges = edges.sourceToJobEdges
     jobs_to_sat_edges = edges.jobToSatelliteTimeSlotEdges
-    sat_to_ground_pass_edges = edges.satelliteTimeSlotToGroundStationPassEdge
+    sat_to_rate_limiter = edges.satelliteTimeSlotToRateLimiterEdges
+    rate_limiter_to_ground_station = edges.rateLimiterToGroundStationEdges
     ground_pass_to_sink_edges = edges.groundStationPassToSinkEdge
 
     # Convert job-to-timeslot edges from a dictionary to a list
@@ -408,8 +553,12 @@ def run_network_flow(
     ]
 
     # Convert timeslot-to-ground-station-pass edges from a dictionary to a list
-    timeslot_to_ground_station_edges = [
-        edge for edges in sat_to_ground_pass_edges.values() for edge in edges
+    timeslot_to_rate_limiter_edges = [
+        edge for edges in sat_to_rate_limiter.values() for edge in edges
+    ]
+
+    rate_limiter_to_ground_station_edges = [
+        edge for edges in rate_limiter_to_ground_station.values() for edge in edges
     ]
 
     # Convert ground-station-pass-to-sink edges from a dictionary to a list
@@ -418,7 +567,7 @@ def run_network_flow(
     ]
 
     # Combine all edges into one big edge list
-    graph_edges = source_to_jobs_edges + job_to_timeslot_edges + timeslot_to_ground_station_edges + sink_edges
+    graph_edges = source_to_jobs_edges + job_to_timeslot_edges + timeslot_to_rate_limiter_edges + rate_limiter_to_ground_station_edges + sink_edges
 
     # Add edges with capacities to the graph
     for u, v, capacity in graph_edges:
@@ -438,15 +587,17 @@ def run_network_flow(
         # handle that error gracefully here.
         logger.error(f'networkx exception: returning early')
         logger.error(f'networkx exception: {e}')
-        return {sat: [] for sat in satellites}
+        return NetworkFlowSolution(
+            {sat: [] for sat in satellites},
+            {sat: [] for sat in satellites},
+            {sat: [] for sat in satellites}
+        )
 
     graph_t1 = time.time()
     logger.debug(f'Finding the maximum flow took {graph_t1 - graph_t0} seconds')
 
     # Get the optimal edges from the graph
     optimal_edges = extract_optimal_edges(flow_dict, satellites)
-
-    new_sat_edges = optimal_edges.jobToSatelliteTimeSlotEdges
 
     alg_t1 = time.time()
 
@@ -463,4 +614,4 @@ def run_network_flow(
         debug_mode
     )
 
-    return new_sat_edges
+    return format_solution(satellites, optimal_edges)

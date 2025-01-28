@@ -55,7 +55,7 @@ import logging
 from pathlib import Path
 import random
 import time
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 import numpy as np
 from skyfield.api import EarthSatellite
@@ -63,7 +63,7 @@ from skyfield.api import EarthSatellite
 from soso.debug import debug
 from soso.interval_tree import SatelliteInterval, GroundStationPassInterval
 from soso.job import Job
-from soso.network_flow.edge_types import JobToSatelliteTimeSlotEdge
+from soso.network_flow.edge_types import JobToSatelliteTimeSlotEdge, NetworkFlowSolution, SatelliteToList
 from soso.network_flow.network_flow_scheduler_improved import run_network_flow
 from soso.outage_request import OutageRequest
 
@@ -73,7 +73,7 @@ POPULATION_SIZE = 10
 The number of problem instances to be considering at any given time.
 '''
 
-GENERATIONS = 100
+GENERATIONS = 50
 '''
 The number of iterations of the genetic algorithm.
 '''
@@ -121,13 +121,13 @@ class ProblemInstance:
     The list of outage requests to be scheduled into satellites.
     '''
 
-    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]]
+    satellite_intervals: SatelliteToList[SatelliteInterval]
     '''
     The dictionary mapping satellites to intervals, where each interval has a
     beginning time, ending tme, and a list of jobs.
     '''
 
-    ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]]
+    ground_station_passes: SatelliteToList[GroundStationPassInterval]
     '''
     The dictionary mapping satellites to ground station passes, where each pass
     has a beginning time, ending tme, and a ground station.
@@ -136,8 +136,8 @@ class ProblemInstance:
 
 def get_satellite_intervals_from_genome(
     problem_instance: ProblemInstance,
-    genome: Dict[EarthSatellite, List[List[Literal[0, 1]]]]
-) -> Dict[EarthSatellite, List[SatelliteInterval]]:
+    genome: SatelliteToList[List[Literal[0, 1]]]
+) -> SatelliteToList[SatelliteInterval]:
     '''
     Gets satellite intervals that are enabled in the genome.
 
@@ -172,7 +172,7 @@ class Individual:
     An individual in the population of the genetic algorithm.
     '''
 
-    __genome: Dict[EarthSatellite, List[List[Literal[0, 1]]]]
+    __genome: SatelliteToList[List[Literal[0, 1]]]
     '''
     Private variable containing the individual's genome.
     '''
@@ -191,13 +191,17 @@ class Individual:
     If the fitness has not yet been calculated, this property will be `None`.
     '''
 
-    def __init__(self, genome: Dict[EarthSatellite, List[List[Literal[0, 1]]]], problem_instance: ProblemInstance):
+    def __init__(
+        self,
+        genome: SatelliteToList[List[Literal[0, 1]]],
+        problem_instance: ProblemInstance
+    ):
         self.__genome = genome
         self.__problem_instance = problem_instance
         self.__fitness = None
 
     @property
-    def genome(self) -> Dict[EarthSatellite, List[List[Literal[0, 1]]]]:
+    def genome(self) -> SatelliteToList[List[Literal[0, 1]]]:
         '''
         The individual's genome.
 
@@ -249,7 +253,7 @@ class Individual:
         # Calculate the variance of the amount of jobs scheduled in each satellite
         jobs_in_each_satellite = [
             len(job_to_timeslot_edges)
-                for satellite, job_to_timeslot_edges in solution.items()
+                for satellite, job_to_timeslot_edges in solution.satelliteTimeSlots.items()
         ]
         variance = np.var(jobs_in_each_satellite)
         sigmoid_variance = 1.0 / (1.0 + np.exp(-variance))
@@ -263,7 +267,7 @@ class Individual:
         # scheduled
         total_scheduled_job_priority_sum = sum(
             job_to_timeslot_edge.job.priority.value
-                for satellite, job_to_timeslot_edges in solution.items()
+                for satellite, job_to_timeslot_edges in solution.satelliteTimeSlots.items()
                     for job_to_timeslot_edge in job_to_timeslot_edges
         )
 
@@ -279,7 +283,7 @@ class Individual:
         V = 1 - variance
 
         # Fitness formula (still being tweaked)
-        self.__fitness = 750 * P + 15 * V
+        self.__fitness = float(750 * P + 15 * V)
 
         return self.__fitness
 
@@ -318,8 +322,8 @@ def generate_population(
     satellites: List[EarthSatellite],
     jobs: List[Job],
     outage_requests: List[OutageRequest],
-    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
-    ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]]
+    satellite_intervals: SatelliteToList[SatelliteInterval],
+    ground_station_passes: SatelliteToList[GroundStationPassInterval]
 ) -> Tuple[ProblemInstance, List[Individual]]:
     '''
     Generates an initial population.
@@ -357,7 +361,7 @@ def generate_population(
     population: List[Individual] = []
 
     for _ in range(POPULATION_SIZE):
-        genome = {
+        genome: SatelliteToList[List[Literal[0, 1]]] = {
             sat: [
                 [0 if random.random() > INITIAL_ENABLE_PROBABILITY else 1 for job in interval.data]
                 for interval in intervals
@@ -463,7 +467,7 @@ def mutate(
         A new individual with the mutated genome.
     '''
 
-    new_genome = {
+    new_genome: SatelliteToList[List[Literal[0, 1]]] = {
         sat: [
             [
                 1 - bit if random.random() > MUTATION_RATE else bit
@@ -484,9 +488,9 @@ def run_genetic_algorithm(
     satellites: List[EarthSatellite],
     jobs: List[Job],
     outage_requests: List[OutageRequest],
-    satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
-    ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]]
-) -> Dict[EarthSatellite, List[JobToSatelliteTimeSlotEdge]]:
+    satellite_intervals: SatelliteToList[SatelliteInterval],
+    ground_station_passes: SatelliteToList[GroundStationPassInterval]
+) -> NetworkFlowSolution:
     '''
     The main entry point to the genetic algorithm part of the SOSO scheduling
     algorithm.
@@ -564,6 +568,9 @@ def run_genetic_algorithm(
 
         if best_individual:
             debug_genetic_info(best_individual)
+
+    if not best_individual:
+        raise Exception('Genetic algorithm did not find a best individual')
 
     end_time = time.time()
 

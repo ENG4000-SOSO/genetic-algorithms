@@ -1,3 +1,4 @@
+import argparse
 import logging
 import logging.config
 logging.config.fileConfig('logging_config.ini')
@@ -53,10 +54,25 @@ satellite_passes = generate_satellite_intervals(
 satellite_intervals = satellite_passes.satellite_intervals
 ground_station_passes = satellite_passes.ground_station_passes
 
-# solution = run_network_flow(satellites, jobs, satellite_intervals, ground_station_passes, True)
-solution = soso.genetic.genetic_scheduler.run_genetic_algorithm(satellites, jobs, outage_requests, satellite_intervals, ground_station_passes)
+parser = argparse.ArgumentParser()
+parser.add_argument('alg_type', type=str)
+args = parser.parse_args()
 
-for satellite, job_to_satellite_time_slots in solution.items():
+a = time.time()
+
+if args.alg_type == 'network':
+    solution = run_network_flow(satellites, jobs, satellite_intervals, ground_station_passes, True)
+elif args.alg_type == 'genetic':
+    solution = soso.genetic.genetic_scheduler.run_genetic_algorithm(satellites, jobs, outage_requests, satellite_intervals, ground_station_passes)
+else:
+    raise Exception('Invalid command line argument option')
+
+b = time.time()
+
+for satellite, timeslots in solution.solutionTimeSlots.items():
     print(f'Satellite: {satellite.name}')
-    for job_to_satellite_time_slot in job_to_satellite_time_slots:
-        print(f'    {job_to_satellite_time_slot.job} @ {job_to_satellite_time_slot.satellite_timeslot.start} - {job_to_satellite_time_slot.satellite_timeslot.end}')
+    for timeslot in timeslots:
+        print(f'    {timeslot.job} in {timeslot.satelliteTimeSlot.satellite.name} from {timeslot.satelliteTimeSlot.start.strftime("%B %d %Y @ %I:%M %p")} to {timeslot.satelliteTimeSlot.end.strftime("%B %d %Y @ %I:%M %p")}, downlinked at {timeslot.groundStationPassTimeSlot.ground_station.name} from {timeslot.groundStationPassTimeSlot.start.strftime("%B %d %Y @ %I:%M %p")} to {timeslot.groundStationPassTimeSlot.end.strftime("%B %d %Y @ %I:%M %p")}')
+
+print(f'{sum([len(timeslotlist) for timeslotlist in solution.solutionTimeSlots.values()])} out of {len(jobs)} scheduled in {b-a:.2f} seconds')
+print(f'{b-a} seconds')
