@@ -63,7 +63,10 @@ from skyfield.api import EarthSatellite
 from soso.debug import debug
 from soso.interval_tree import SatelliteInterval, GroundStationPassInterval
 from soso.job import Job
-from soso.network_flow.edge_types import JobToSatelliteTimeSlotEdge, NetworkFlowSolution, SatelliteToList
+from soso.network_flow.edge_types import SatelliteToList
+from soso.bin_packing.ground_station_bin_packing import \
+    schedule_downlinks, \
+    ScheduleUnit
 from soso.network_flow.network_flow_scheduler_improved import run_network_flow
 from soso.outage_request import OutageRequest
 
@@ -132,6 +135,51 @@ class ProblemInstance:
     The dictionary mapping satellites to ground station passes, where each pass
     has a beginning time, ending tme, and a ground station.
     '''
+
+
+def optimize_schedule(
+    satellites: List[EarthSatellite],
+    jobs: List[Job],
+    satellite_intervals: SatelliteToList[SatelliteInterval],
+    ground_station_passes: SatelliteToList[GroundStationPassInterval]
+) -> SatelliteToList[ScheduleUnit]:
+    '''
+    Generate an optimized schedule using network flow and bin packing
+    algorithms.
+
+    Args:
+        satellites: The list of satellites.
+
+        jobs: The list of jobs.
+
+        satellite_intervals: The satellite intervals in which jobs can be
+            scheduled.
+
+        ground_station_passes: The ground station passes in which jobs can be
+            downlinked.
+
+    Returns:
+        An optimized schedule where each satellite has a list of schedule units,
+        containing a job, satellite timeslot, and a ground station pass.
+    '''
+
+    # Run the network flow optimization scheduling algorithm to get the best
+    # solution given non-restricted jobs
+    network_flow_solution = run_network_flow(
+        satellites,
+        jobs,
+        satellite_intervals
+    )
+
+    # Run the bin packing algorithm to assign ground station passes to each
+    # satellite timeslot for downlinking
+    solution = schedule_downlinks(
+        satellites,
+        network_flow_solution,
+        ground_station_passes
+    )
+
+    return solution
 
 
 def get_satellite_intervals_from_genome(
@@ -241,19 +289,19 @@ class Individual:
             self.genome
         )
 
-        # Run the network flow optimization scheduling algorithm to get the best
-        # solution given non-restricted jobs
-        solution = run_network_flow(
+        # Optimize the schedule using network flow and bin packing algorithms
+        solution = optimize_schedule(
             self.problem_instance.satellites,
             self.problem_instance.jobs,
             satellite_intervals,
             self.problem_instance.ground_station_passes
         )
 
-        # Calculate the variance of the amount of jobs scheduled in each satellite
+        # Calculate the variance of the amount of jobs scheduled in each
+        # satellite
         jobs_in_each_satellite = [
-            len(job_to_timeslot_edges)
-                for satellite, job_to_timeslot_edges in solution.satelliteTimeSlots.items()
+            len(schedule_units)
+                for satellite, schedule_units in solution.items()
         ]
         variance = np.var(jobs_in_each_satellite)
         sigmoid_variance = 1.0 / (1.0 + np.exp(-variance))
@@ -266,12 +314,12 @@ class Individual:
         # Calculate the weighted sum of the priorities of all jobs that were
         # scheduled
         total_scheduled_job_priority_sum = sum(
-            job_to_timeslot_edge.job.priority.value
-                for satellite, job_to_timeslot_edges in solution.satelliteTimeSlots.items()
-                    for job_to_timeslot_edge in job_to_timeslot_edges
+            schedule_unit.job.priority.value
+                for satellite, schedule_units in solution.items()
+                    for schedule_unit in schedule_units
         )
 
-        if total_job_priority_sum == 0 or sigmoid_variance == 0:
+        if total_job_priority_sum == 0 or sigmoid_variance == 0 or variance == 0:
             # Returning 0 here to avoid division by zero exception
             return 0.0
 
@@ -280,10 +328,12 @@ class Individual:
         P = (total_scheduled_job_priority_sum / total_job_priority_sum)
 
         # Smaller variance is better, so normalize by using 1-variance
-        V = 1 - variance
+        V = variance
 
         # Fitness formula (still being tweaked)
-        self.__fitness = float(750 * P + 15 * V)
+        self.__fitness = float(P)
+
+        logger.debug(f'Fitness: {self.__fitness}, P: {P}, V: {V}')
 
         return self.__fitness
 
@@ -313,7 +363,6 @@ def debug_genetic_info(
         individual.problem_instance.satellites,
         individual.problem_instance.jobs,
         satellite_intervals,
-        individual.problem_instance.ground_station_passes,
         DEBUG_DIR
     )
 
@@ -330,17 +379,17 @@ def generate_population(
 
     Args:
         satellites: The list of satellites to be scheduled with jobs and outage
-        requests.
+            requests.
 
         jobs: The list of jobs to be scheduled.
 
         outage_requests: The list of (non-negotiable) outage requests.
 
         satellite_intervals: The dictionary mapping each satellite to its list
-        of schedulable intervals.
+            of schedulable intervals.
 
         ground_station_passes: The dictionary mapping each satellite to its list
-        of ground station passes.
+            of ground station passes.
 
     Returns:
         A tuple containing the problem instance (which has a list of satellites,
@@ -441,9 +490,6 @@ def crossover(
                 parent = parent1 if random.random() > 0.5 else parent2
                 new_genome[sat].append(parent.genome[sat][i])
 
-        # # Calculate the fitness of the new genome
-        # new_fitness = fitness(new_genome, problem_instance)
-
         # return Individual(new_genome, new_fitness)
         return Individual(new_genome, problem_instance)
 
@@ -490,24 +536,24 @@ def run_genetic_algorithm(
     outage_requests: List[OutageRequest],
     satellite_intervals: SatelliteToList[SatelliteInterval],
     ground_station_passes: SatelliteToList[GroundStationPassInterval]
-) -> NetworkFlowSolution:
+) -> SatelliteToList[ScheduleUnit]:
     '''
     The main entry point to the genetic algorithm part of the SOSO scheduling
     algorithm.
 
     Args:
         satellites: The list of satellites to be scheduled with jobs and outage
-        requests.
+            requests.
 
         jobs: The list of jobs to be scheduled.
 
         outage_requests: The list of (non-negotiable) outage requests.
 
         satellite_intervals: The dictionary mapping each satellite to its list
-        of schedulable intervals.
+            of schedulable intervals.
 
         ground_station_passes: The dictionary mapping each satellite to its list
-        of ground station passes.
+            of ground station passes.
 
     Returns:
         A dictionary mapping each satellite to a list, where items in the list
@@ -583,7 +629,7 @@ def run_genetic_algorithm(
 
     # Run the network flow algorithm one last time to get the solution to the
     # problem instance and the best individual's genome
-    return run_network_flow(
+    return optimize_schedule(
         problem_instance.satellites,
         problem_instance.jobs,
         best_satellite_intervals,

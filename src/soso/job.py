@@ -50,14 +50,17 @@ class Job(SatellitePassLocation):
     '''
 
     priority: Priority
-    latitude: int
-    longitude: int
+    start: datetime
+    end: datetime
+    delivery: datetime
+    size: float = 128_000_000 # TODO: MAKE THIS DYNAMIC
 
     def __init__(
         self,
         name: str,
         start: str,
         end: str,
+        delivery: str,
         priority: str,
         latitude: int,
         longitude: int
@@ -68,11 +71,14 @@ class Job(SatellitePassLocation):
             raise Exception('start time missing')
         if not end:
             raise Exception('end time missing')
+        if not delivery:
+            raise Exception('delivery time missing')
         if not priority:
             raise Exception('priority missing')
 
         self.start = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
         self.end = datetime.fromisoformat(end).replace(tzinfo=timezone.utc)
+        self.delivery = datetime.fromisoformat(delivery).replace(tzinfo=timezone.utc)
         self.priority = Priority(priority)
 
     def __str__(self):
@@ -93,7 +99,7 @@ class GroundStation(SatellitePassLocation):
     height: float
     mask: int
     uplink_rate: int
-    downlink_rat: int
+    downlink_rate: int
 
     def __init__(
         self,

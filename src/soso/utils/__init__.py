@@ -64,6 +64,7 @@ def parse_jobs(order_data_dir: Path) -> List[Job]:
                     f'Job {next(counter)}',
                     data['ImageStartTime'],
                     data['ImageEndTime'],
+                    data['DeliveryTime'],
                     data['Priority'],
                     data['Latitude'],
                     data['Longitude']

@@ -214,75 +214,20 @@ class JobToSatelliteTimeSlotEdge(GraphEdge):
         return self.f
 
 
-
-class SatelliteTimeSlotToRateLimiter(GraphEdge):
+class SatelliteTimeSlotToSinkEdge(GraphEdge):
     '''
-    Representation of a graph edge connecting a satellite time slot node to a
-    ground station pass node.
+    Representation of a graph edge connecting a satellite time slot node to the
+    sink node.
     '''
 
     @property
     def satellite_timeslot(self) -> SatelliteTimeSlot:
         '''
-        The satellite time slot node of the edge.
-        '''
-        return cast(SatelliteTimeSlot, self.u)
-
-    @property
-    def rate_limiter(self) -> RateLimiter:
-        '''
-        The ground station node of the edge.
-        '''
-        return cast(RateLimiter, self.v)
-
-    @property
-    def flow(self) -> int:
-        '''
-        The flow across the edge.
-        '''
-        return self.f
-
-
-class RateLimiterEdge(GraphEdge):
-    '''
-    Representation of a graph edge connecting a job node to a satellite time
-    slot node.
-    '''
-
-    @property
-    def rate_limiter(self) -> RateLimiter:
-        '''
-        '''
-        return cast(RateLimiter, self.u)
-
-    @property
-    def ground_station(self) -> GroundStationPassTimeSlot:
-        '''
         The satellite time slot node of the edge. This will be the string
         representation of an interval (with a start and end datetime) for a
         satellite.
         '''
-        return cast(GroundStationPassTimeSlot, self.v)
-
-    @property
-    def flow(self) -> int:
-        '''
-        The flow across the edge.
-        '''
-        return self.f
-
-class GroundStationPassToSinkEdge(GraphEdge):
-    '''
-    Representation of a graph edge connecting a ground station pass node to a
-    sink node.
-    '''
-
-    @property
-    def ground_station(self) -> GroundStationPassTimeSlot:
-        '''
-        The ground station node of the edge.
-        '''
-        return cast(GroundStationPassTimeSlot, self.u)
+        return cast(SatelliteTimeSlot, self.v)
 
     @property
     def sink(self) -> str:
@@ -318,23 +263,10 @@ class Edges:
     jobs to time slots for the satellite.
     '''
 
-    satelliteTimeSlotToRateLimiterEdges: SatelliteToList[SatelliteTimeSlotToRateLimiter]
+    satelliteTimeSlotToSinkEdges: SatelliteToList[SatelliteTimeSlotToSinkEdge]
     '''
     A dictionary that maps each satellite to a list of edges. The edges are from
-    time slots for that satellite to rate limiter nodes that restrict the flow
-    to ground stations.
-    '''
-
-    rateLimiterToGroundStationEdges: SatelliteToList[RateLimiterEdge]
-    '''
-    A dictionary that maps each satellite to a list of edges. The edges are from
-    rate limiter nodes to ground station pass timeslots for the satellite.
-    '''
-
-    groundStationPassToSinkEdge: SatelliteToList[GroundStationPassToSinkEdge]
-    '''
-    A dictionary that maps each satellite to a list of edges. The edges are from
-    ground station passes for that satellite to the sink node.
+    time slots for the satellite to the sink node.
     '''
 
 
@@ -359,30 +291,4 @@ class SolutionTimeSlot:
     groundStationPassTimeSlot: GroundStationPassTimeSlot
     '''
     The timeslot for the ground station pass where the job will be downlinked.
-    '''
-
-
-@dataclass
-class NetworkFlowSolution:
-    '''
-    A representation of the full network flow solution.
-    '''
-
-    solutionTimeSlots: SatelliteToList[SolutionTimeSlot]
-    '''
-    A mapping of each satellite to a list of timeslots containing jobs and
-    information on when those jobs will be performed and downlinked.
-    '''
-
-    satelliteTimeSlots: SatelliteToList[JobToSatelliteTimeSlotEdge]
-    '''
-    A mapping of each satellite to a list of edges from the optimal network flow
-    graph, where the edges connect job and satellite timeslot nodes.
-    '''
-
-    groundStationPassTimeSlots: SatelliteToList[GroundStationPassToSinkEdge]
-    '''
-    A mapping of each satellite to a list of edges from the optimal network flow
-    graph, where the edges connect a ground station pass timeslot to the sink
-    node.
     '''
