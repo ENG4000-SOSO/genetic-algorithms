@@ -12,6 +12,7 @@ soso.egg-info/
 
 # Debugging information
 debug/
+debug_old/
 
 # Random files for testing
 QUESTIONS.txt
