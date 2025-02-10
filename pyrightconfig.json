@@ -1,0 +1,10 @@
+{
+    "pythonVersion": "3.11",
+    "venvPath": "./venv",
+    "typeCheckingMode": "basic",
+    "reportMissingImports": true,
+    "reportMissingTypeStubs": false,
+    "ignore": [
+      "./sandbox/*"
+    ]
+}
