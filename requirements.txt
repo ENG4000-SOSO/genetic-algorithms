@@ -11,6 +11,7 @@ jplephem==2.22
 kiwisolver==1.4.8
 matplotlib==3.8.4
 networkx==3.4.2
+nodeenv==1.9.1
 numpy==1.26.4
 ortools==9.11.4210
 packaging==23.2
@@ -20,6 +21,7 @@ protobuf==5.26.1
 PuLP==2.9.0
 pyparsing==3.2.1
 pyproj==3.6.1
+pyright==1.1.393
 pyshp==2.3.1
 python-dateutil==2.9.0.post0
 pytz==2024.2
@@ -27,5 +29,6 @@ sgp4==2.23
 six==1.17.0
 skyfield==1.49
 sortedcontainers==2.4.0
--e git+https://github.com/ENG4000-SOSO/genetic-algorithms.git@d45ceef78726f0ddb76e4b2303977372480986ce#egg=soso
+-e git+https://github.com/ENG4000-SOSO/genetic-algorithms.git@6027b64d0cb7deeac74eef694cdc7126a820c6e9#egg=soso
+typing_extensions==4.12.2
 tzdata==2024.2
