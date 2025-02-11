@@ -22,15 +22,14 @@ import numpy as np
 from skyfield.api import EarthSatellite
 
 from soso.debug import debug
-from soso.interval_tree import GroundStationPassInterval, SatelliteInterval
+from soso.interval_tree import SatelliteInterval
 from soso.job import Job
 from soso.network_flow.edge_types import \
-    GroundStationPassTimeSlot, \
     JobToSatelliteTimeSlotEdge, \
-    RateLimiter, \
     SatelliteTimeSlot, \
+    SatelliteTimeSlotToSinkEdge, \
     SatelliteToList, \
-    SourceToJobEdge, SatelliteTimeSlotToSinkEdge
+    SourceToJobEdge
 
 
 @debug
