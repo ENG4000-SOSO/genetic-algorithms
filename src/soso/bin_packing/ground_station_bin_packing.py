@@ -1,15 +1,36 @@
 '''
-Bin packing algorithm.
+Main functionality for the bin packing algorithm solution to the problem of
+scheduling satellite downlinks.
+
+The motivation for using a bin packing algorithm (instead of including this in
+the network flow algorithm, for example) is that scheduling downlinks is not a
+simple yes/no decision. Different ground station passes can have different
+downlink rates and durations, leading to different amounts of data that can be
+sent during the downlink. Additionally, different jobs can have different image
+sizes, which leads to different amounts of data that satellites have to
+downlink.
+
+This problem can be modelled as a bin packing problem. Satellite jobs are
+'items' which have a size (the image size in MB), and ground station passes are
+'bins' which have a capacity (the amount of data that can be downlinked in the
+ground station pass in MB). The objective is to maximize the number of items
+(jobs) that are packed into (downlinked in) bins (ground station passes).
+
+The bin packing problem can be solved using linear programming. Google OR-Tools
+is used in this algorithm with the SCIP solver to perform the linear programming
+optimization. For more information, see
+https://developers.google.com/optimization/pack/bin_packing.
 '''
 
 
 from dataclasses import dataclass
 import logging
-from typing import List
+from typing import List, Set
 
 from ortools.linear_solver import pywraplp
 from skyfield.api import EarthSatellite
 
+from soso.debug import debug
 from soso.interval_tree import GroundStationPassInterval
 from soso.job import Job
 from soso.network_flow.edge_types import \
@@ -66,6 +87,131 @@ class ScheduleUnit:
     '''
 
 
+@debug
+def debug_size_and_capacity_information(
+    satellite_timeslots: List[JobToSatelliteTimeSlotEdge],
+    ground_station_passes: List[GroundStationPassInterval],
+    satellite: EarthSatellite
+) -> None:
+    '''
+    Debugs information about the number of jobs, total size of the jobs (in MB),
+    and total size of the ground station passes (in MB).
+    '''
+
+    # Get set of jobs and total size of all jobs
+    jobs_set = set([sat_timeslot.job for sat_timeslot in satellite_timeslots])
+    bytes_to_downlink = sum(
+        [sat_timeslot.job.size for sat_timeslot in satellite_timeslots]
+    )
+
+    # Get total capacity of all ground station passes
+    total_capacity_bytes = sum(
+        [
+            ground_station_pass.capacity
+                for ground_station_pass in ground_station_passes
+        ]
+    )
+
+    logger.debug(
+        f'Satellite {satellite.name}: '
+            f'{int(bytes_to_downlink / 1_000_000):,} MB to downlink in '
+            f'{len(jobs_set)} jobs, '
+            f'{int(total_capacity_bytes / 1_000_000):,} MB available in '
+            f'{len(ground_station_passes)} ground station passes, '
+    )
+
+
+def get_downlinkable_jobs(
+    downlinking_opportunities: SatelliteToList[DownlinkingOpportunities]
+) -> Set[Job]:
+    '''
+    Gets the set of all downlinkable jobs given a list of downlinking
+    opportunities.
+    '''
+
+    return set(
+        [
+            opportunity.satellite_timeslot.job
+                for sat, opportunities in downlinking_opportunities.items()
+                    for opportunity in opportunities
+                        if len(opportunities) > 0
+        ]
+    )
+
+
+@debug
+def debug_downlinkable_jobs(
+    satellite_timeslots: SatelliteToList[JobToSatelliteTimeSlotEdge],
+    downlinking_opportunities: SatelliteToList[DownlinkingOpportunities]
+) -> None:
+    '''
+    Debugs information about jobs that are not downlinkable.
+    '''
+
+    # Get set of all jobs (will be used for logging)
+    jobs_set = set(
+        [
+            timeslot.job
+                for sat, timeslots in satellite_timeslots.items()
+                    for timeslot in timeslots
+        ]
+    )
+
+    # Get set of all jobs that have downlinking opportunities
+    downlinkable_jobs_set = get_downlinkable_jobs(downlinking_opportunities)
+
+    logger.debug(
+        f'Jobs to downlink: {len(jobs_set)}, jobs with downlinking '
+            f'opportunities: f{len(downlinkable_jobs_set)}'
+    )
+
+    # Get set of all jobs that do not have downlinking opportunities
+    non_downlinkable_jobs_set = downlinkable_jobs_set.difference(jobs_set)
+
+    if len(non_downlinkable_jobs_set) > 0:
+        logger.debug(
+            f'Jobs that do not have downlinking opportunities: '
+                f'{non_downlinkable_jobs_set}'
+        )
+
+
+
+def debug_downlinked_jobs(
+    downlinking_opportunities: SatelliteToList[DownlinkingOpportunities],
+    solution: SatelliteToList[ScheduleUnit]
+) -> None:
+    '''
+    Debugs information about jobs that were not assigned downlinking times.
+    '''
+
+    # Get set of all jobs that have downlinking opportunities
+    downlinkable_jobs_set = get_downlinkable_jobs(downlinking_opportunities)
+
+    # Get set of all jobs that were assigned downlinking times
+    downlinked_jobs_set = set(
+        [
+            schedule_unit.job
+                for sat, schedule_units in solution.items()
+                    for schedule_unit in schedule_units
+        ]
+    )
+
+    logger.debug(
+        f'Jobs scheduled for downlinking: {len(downlinked_jobs_set)} out of '
+            f'{len(downlinkable_jobs_set)} downlinkable jobs'
+    )
+
+    # Get set of all jobs that were not assigned downlinking times
+    non_downlinked_jobs_set = \
+        downlinkable_jobs_set.difference(downlinked_jobs_set)
+
+    if len(non_downlinked_jobs_set) > 0:
+        logger.debug(
+            f'Jobs that were not scheduled downlinks: '
+                f'{non_downlinked_jobs_set}'
+        )
+
+
 def schedule_downlinks_for_satellite(
     satellite: EarthSatellite,
     downlinking_opportunities: List[DownlinkingOpportunities]
@@ -75,8 +221,10 @@ def schedule_downlinks_for_satellite(
     timeslot for a satellite.
 
     Args:
+        satellite: The satellite whose downlinks are being scheduled.
+
         downlinking_opportunities: The downlinking opportunities for a
-        satellite.
+            satellite.
 
     Returns:
         A full schedule for a satellite, including jobs, satellite timeslots to
@@ -93,13 +241,15 @@ def schedule_downlinks_for_satellite(
     ground_station_passes = list(set(
         ground_station_pass
             for downlinking_opportunity in downlinking_opportunities
-                for ground_station_pass in downlinking_opportunity.ground_station_passes
+                for ground_station_pass in
+                    downlinking_opportunity.ground_station_passes
     ))
 
-    jobs_set = set([a.job for a in satellite_timeslots])
-    bytes_to_downlink = sum([a.job.size for a in satellite_timeslots])
-    total_capacity = sum([a.capacity for a in ground_station_passes])
-    logger.debug(f'Satellite {satellite.name}: {len(jobs_set)} jobs, {int(bytes_to_downlink / 1_000_000):,} MB to downlink, {int(total_capacity / 1_000_000):,} MB available')
+    debug_size_and_capacity_information(
+        satellite_timeslots,
+        ground_station_passes,
+        satellite
+    )
 
     n = len(satellite_timeslots)
     m = len(ground_station_passes)
@@ -162,17 +312,9 @@ def schedule_downlinks_for_satellite(
     # x[i, j] = 0".
     for i in range(n):
         for j in range(m):
-            print(satellite_timeslots[i].satellite_timeslot)
-            print(len(satellite_timeslots))
-            print(downlinking_opportunities[i].satellite_timeslot.satellite_timeslot)
-            print(len(downlinking_opportunities))
-            print(downlinking_opportunities[i].ground_station_passes)
-            if satellite_timeslots[i].satellite_timeslot == downlinking_opportunities[i].satellite_timeslot.satellite_timeslot:
-                print('good')
-            else:
-                raise Exception('AS')
-
-            if ground_station_passes[j] not in downlinking_opportunities[i].ground_station_passes:
+            downlinking_passes = \
+                downlinking_opportunities[i].ground_station_passes
+            if ground_station_passes[j] not in downlinking_passes:
                 solver.Add(x[i, j] == 0)
 
     # Objective
@@ -187,7 +329,7 @@ def schedule_downlinks_for_satellite(
     # Solve the bin packing problem
     status = solver.Solve()
 
-    solution = []
+    solution: List[ScheduleUnit] = []
     unpacked_items = []
 
     if status == pywraplp.Solver.OPTIMAL or status == pywraplp.Solver.FEASIBLE:
@@ -211,12 +353,13 @@ def schedule_downlinks_for_satellite(
                 unpacked_items.append(satellite_timeslots[i])
 
         logger.debug(f'Unpacked jobs: {len(unpacked_items)}')
-
         return solution
 
     else:
         logger.error("No optimal or feasible solution found")
-        raise Exception('bad!')
+        raise Exception(
+            'No optimal of feasible solution found for downlink scheduling'
+        )
 
 
 def schedule_downlinks(
@@ -244,16 +387,16 @@ def schedule_downlinks(
         sat: [] for sat in satellites
     }
 
-    print('***************')
-    print([p.ground_station for s, g in ground_station_passes.items() for p in g])
-    jobs_before = set([a.job for sat, s in satellite_timeslots.items() for a in s])
-
+    # Identify all downlinking opportunities for each satellite
     for sat, timeslots in satellite_timeslots.items():
         for timeslot in timeslots:
 
             downlinks: List[GroundStationPassInterval] = []
 
             for ground_station_pass in ground_station_passes[sat]:
+                # There is a downlinking opportunity between a job and a ground
+                # station pass if the job's delivery time is before the
+                # beginning of the ground station pass
                 if timeslot.job.delivery < ground_station_pass.begin:
                     downlinks.append(ground_station_pass)
 
@@ -264,20 +407,15 @@ def schedule_downlinks(
                 )
             )
 
-    jobs_after = set([a.satellite_timeslot.job for sat, s in downlinking_opportunities.items() for a in s])
-
-    logger.warning(f'jobs before: {len(jobs_before)}')
-    logger.warning(f'jobs after: {len(jobs_after)}')
-    logger.warning(f'lost these: {jobs_after.difference(jobs_before)}')
-    logger.warning(f'should be empty: {jobs_before.difference(jobs_after)}')
-
     solution: SatelliteToList[ScheduleUnit] = {sat: [] for sat in satellites}
 
-    for satellite, x in downlinking_opportunities.items():
-        solution[satellite] = schedule_downlinks_for_satellite(satellite, x)
+    for satellite, opportunities in downlinking_opportunities.items():
+        # Schedule downlinks
+        satellite_schedule = schedule_downlinks_for_satellite(
+            satellite,
+            opportunities
+        )
 
-    jobs_optimized = set([a.job for sat, s in solution.items() for a in s])
-    logger.warning(f'jobs optimized: {len(jobs_optimized)}')
-    logger.warning(f'lost to optimization: {jobs_after.difference(jobs_optimized)}')
+        solution[satellite] = satellite_schedule
 
     return solution
