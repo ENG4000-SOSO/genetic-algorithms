@@ -71,17 +71,17 @@ from soso.network_flow.network_flow_scheduler_improved import run_network_flow
 from soso.outage_request import OutageRequest
 
 
-POPULATION_SIZE = 10
+POPULATION_SIZE = 25
 '''
 The number of problem instances to be considering at any given time.
 '''
 
-GENERATIONS = 50
+GENERATIONS = 25
 '''
 The number of iterations of the genetic algorithm.
 '''
 
-CROSSOVER_RATE = 0.75
+CROSSOVER_RATE = 0.25
 '''
 The crossover rate influences the chance of two selected individuals in a
 population 'crossing over' to make a new individual.
@@ -94,7 +94,7 @@ which means the restriction or un-restriction of random jobs from being
 scheduled.
 '''
 
-INITIAL_ENABLE_PROBABILITY = 0.05
+INITIAL_ENABLE_PROBABILITY = 0.01
 '''
 The probability of enabling each job in an individual's genome when the initial
 population is being generated.
@@ -304,7 +304,6 @@ class Individual:
                 for satellite, schedule_units in solution.items()
         ]
         variance = np.var(jobs_in_each_satellite)
-        sigmoid_variance = 1.0 / (1.0 + np.exp(-variance))
 
         # Calculate the weighted sum of the priorities of all jobs
         total_job_priority_sum = sum(
@@ -319,7 +318,7 @@ class Individual:
                     for schedule_unit in schedule_units
         )
 
-        if total_job_priority_sum == 0 or sigmoid_variance == 0 or variance == 0:
+        if total_job_priority_sum == 0:
             # Returning 0 here to avoid division by zero exception
             return 0.0
 
@@ -328,10 +327,13 @@ class Individual:
         P = (total_scheduled_job_priority_sum / total_job_priority_sum)
 
         # Smaller variance is better, so normalize by using 1-variance
-        V = variance
+        V = 1 - variance
 
-        # Fitness formula (still being tweaked)
-        self.__fitness = float(P)
+        # Fitness formula
+        F = 750*P + 13*V
+
+        # Set fitness of individual
+        self.__fitness = float(F)
 
         logger.debug(f'Fitness: {self.__fitness}, P: {P}, V: {V}')
 
