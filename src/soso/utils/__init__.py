@@ -57,11 +57,12 @@ def parse_jobs(order_data_dir: Path) -> List[Job]:
             with open(full_path, 'r') as f:
                 data = json.load(f)
 
-                # if next(counter) > 15:
+                c = next(counter)
+                # if c > 15:
                 #     continue
 
                 job = Job(
-                    f'Job {next(counter)}',
+                    f'Job {c}',
                     data['ImageStartTime'],
                     data['ImageEndTime'],
                     data['DeliveryTime'],
