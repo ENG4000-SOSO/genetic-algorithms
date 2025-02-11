@@ -8,7 +8,8 @@ import time
 
 from skyfield.api import load
 
-import soso.genetic.genetic_scheduler
+from soso.genetic.genetic_scheduler import run_genetic_algorithm
+from soso.bin_packing.ground_station_bin_packing import schedule_downlinks
 from soso.network_flow.network_flow_scheduler_improved import run_network_flow
 from soso.utils import \
     parse_ground_stations, \
@@ -61,18 +62,33 @@ args = parser.parse_args()
 a = time.time()
 
 if args.alg_type == 'network':
-    solution = run_network_flow(satellites, jobs, satellite_intervals, ground_station_passes, True)
+    solution = run_network_flow(satellites, jobs, satellite_intervals, True)
+    for satellite, timeslots in solution.items():
+        print(f'Satellite: {satellite.name}')
+        for timeslot in timeslots:
+            print(f'    {timeslot.job} in {timeslot.satellite_timeslot.satellite.name} from {timeslot.satellite_timeslot.start.strftime("%B %d %Y @ %I:%M %p")} to {timeslot.satellite_timeslot.end.strftime("%B %d %Y @ %I:%M %p")}, downlinked at {"?"} from {"?"} to {"?"}')
+
+elif args.alg_type == 'bin':
+    solution_part1 = run_network_flow(satellites, jobs, satellite_intervals, True)
+    solution = schedule_downlinks(satellites, solution_part1, ground_station_passes)
+    print('=======')
+    for satellite, dtos in solution.items():
+        print(f'Satellite: {satellite.name}')
+        for dto in dtos:
+            print(f'    {dto.job} in {dto.job_timeslot.satellite.name} from {dto.job_timeslot.start.strftime("%B %d %Y @ %I:%M %p")} to {dto.job_timeslot.end.strftime("%B %d %Y @ %I:%M %p")}, downlinked at {dto.downlink_timeslot.ground_station.name} from {dto.downlink_timeslot.begin.strftime("%B %d %Y @ %I:%M %p")} to {dto.downlink_timeslot.end.strftime("%B %d %Y @ %I:%M %p")}')
+
 elif args.alg_type == 'genetic':
-    solution = soso.genetic.genetic_scheduler.run_genetic_algorithm(satellites, jobs, outage_requests, satellite_intervals, ground_station_passes)
+    solution = run_genetic_algorithm(satellites, jobs, outage_requests, satellite_intervals, ground_station_passes)
+    print('=======')
+    for satellite, dtos in solution.items():
+        print(f'Satellite: {satellite.name}')
+        for dto in dtos:
+            print(f'    {dto.job} in {dto.job_timeslot.satellite.name} from {dto.job_timeslot.start.strftime("%B %d %Y @ %I:%M %p")} to {dto.job_timeslot.end.strftime("%B %d %Y @ %I:%M %p")}, downlinked at {dto.downlink_timeslot.ground_station.name} from {dto.downlink_timeslot.begin.strftime("%B %d %Y @ %I:%M %p")} to {dto.downlink_timeslot.end.strftime("%B %d %Y @ %I:%M %p")}')
+
 else:
     raise Exception('Invalid command line argument option')
 
 b = time.time()
 
-for satellite, timeslots in solution.solutionTimeSlots.items():
-    print(f'Satellite: {satellite.name}')
-    for timeslot in timeslots:
-        print(f'    {timeslot.job} in {timeslot.satelliteTimeSlot.satellite.name} from {timeslot.satelliteTimeSlot.start.strftime("%B %d %Y @ %I:%M %p")} to {timeslot.satelliteTimeSlot.end.strftime("%B %d %Y @ %I:%M %p")}, downlinked at {timeslot.groundStationPassTimeSlot.ground_station.name} from {timeslot.groundStationPassTimeSlot.start.strftime("%B %d %Y @ %I:%M %p")} to {timeslot.groundStationPassTimeSlot.end.strftime("%B %d %Y @ %I:%M %p")}')
-
-print(f'{sum([len(timeslotlist) for timeslotlist in solution.solutionTimeSlots.values()])} out of {len(jobs)} scheduled in {b-a:.2f} seconds')
+print(f'{sum([len(timeslotlist) for timeslotlist in solution.values()])} out of {len(jobs)} scheduled in {b-a:.2f} seconds')
 print(f'{b-a} seconds')

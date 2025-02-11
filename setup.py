@@ -13,7 +13,8 @@ setup(
         'networkx',
         'numpy',
         'pandas',
-        'skyfield'
+        'skyfield',
+        'ortools'
     ],
     entry_points={},
     description='Satellite operations services optimizer.',

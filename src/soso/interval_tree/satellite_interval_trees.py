@@ -51,6 +51,12 @@ Threshold for the degrees above the horizontal for a satellite to be considered
 to have a point on Earth in its field-of-view.
 '''
 
+GROUND_STATION_ALTITUDE_DEGREES = 0.0
+'''
+Threshold for the degrees above the horizontal for a satellite to be considered
+able to communicate to a ground station.
+'''
+
 logger: logging.Logger = logging.getLogger(__name__)
 
 
@@ -131,7 +137,8 @@ def find_pass_events(
     satellite_pass_location: SatellitePassLocation,
     t0: Time,
     t1: Time,
-    eph: Any
+    eph: Any,
+    altitude_degrees: float
 ) -> List[Tuple[datetime.datetime, datetime.datetime]]:
     '''
     Finds events of when a satellite passes over a location on Earth.
@@ -140,7 +147,7 @@ def find_pass_events(
         sat: The satellite being analyzed.
 
         satellite_pass_location: The location on Earth being checked for
-        satellite passes.
+            satellite passes.
 
         t0: The start time of the space mission.
 
@@ -169,7 +176,7 @@ def find_pass_events(
         location,
         t0,
         t1,
-        altitude_degrees=ALTITUDE_DEGREES
+        altitude_degrees=altitude_degrees
     )
 
     # Check which of the imaging times are in sunlight
@@ -209,7 +216,7 @@ def generate_ground_station_pass_intervals(
 
     Args:
         satellites: The list of satellites to be analyzed for ground station
-        passes.
+            passes.
 
         ground_stations: The list of ground stations.
 
@@ -218,7 +225,7 @@ def generate_ground_station_pass_intervals(
         t0: The end time of the space mission.
 
         eph: The Skyfield ephemeris data being used to perform astronomical
-        calculations.
+            calculations.
 
     Returns:
         A dictionary mapping each satellite to a list, where items in the list
@@ -228,12 +235,21 @@ def generate_ground_station_pass_intervals(
     '''
 
     # Initialize dictionary of ground station pass intervals
-    ground_station_pass_intervals = {sat: [] for sat in satellites}
+    ground_station_pass_intervals: Dict[EarthSatellite, List[GroundStationPassInterval]] = {
+        sat: [] for sat in satellites
+    }
 
     for sat in satellites:
         for ground_station in ground_stations:
             # Find when the satellite passes over the ground station
-            events = find_pass_events(sat, ground_station, t0, t1, eph)
+            events = find_pass_events(
+                sat,
+                ground_station,
+                t0,
+                t1,
+                eph,
+                GROUND_STATION_ALTITUDE_DEGREES
+            )
 
             # Add the pass events to the dictionary
             for begin, end in events:
@@ -274,7 +290,7 @@ def update_trees_with_jobs(
     '''
 
     # Find pass events for the satellite and job
-    events = find_pass_events(sat, job, t0, t1, eph)
+    events = find_pass_events(sat, job, t0, t1, eph, ALTITUDE_DEGREES)
 
     # Add pass events to the interval tree
     for begin, end in events:
@@ -376,6 +392,7 @@ def get_start_and_end_times_of_mission(jobs: List[Job], ts: Timescale):
     # End time is the latest end time of all the jobs
     t1 = ts.from_datetime(
         max(job.end for job in jobs).replace(tzinfo=datetime.timezone.utc)
+            + datetime.timedelta(days=2)
     )
 
     return t0, t1
@@ -395,7 +412,7 @@ def convert_trees_to_satellite_intervals(
         satellites: The list of satellites in the space mission.
 
         trees: A dictionary mapping each satellite to an interval tree
-        representing intervals that jobs can be scheduled in.
+            representing intervals that jobs can be scheduled in.
 
     Returns:
         A dictionary mapping each satellite to a list of intervals representing
@@ -434,7 +451,7 @@ def filter_unschedulable_timeslots(
         satellite_intervals: Dictionary mapping each satellite to intervals.
 
         ground_station_passes: Dictionary mapping each satellite to a ground
-        station passes.
+            station passes.
 
     Returns:
         Satellite intervals that can be downlinked by a ground station pass.
@@ -475,7 +492,7 @@ def generate_satellite_intervals(
 
     Args:
         satellites: The list of satellites to be scheduled with jobs and outage
-        requests.
+            requests.
 
         jobs: The list of jobs to be scheduled.
 
@@ -486,7 +503,7 @@ def generate_satellite_intervals(
         ts: The Skyfield timescale being used to simulate events in the future.
 
         eph: The Skyfield ephemeris data being used to perform astronomical
-        calculations.
+            calculations.
 
     Returns:
         A dictionary mapping each satellite to a list, where items in the list

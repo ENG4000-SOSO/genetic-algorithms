@@ -22,16 +22,12 @@ import numpy as np
 from skyfield.api import EarthSatellite
 
 from soso.debug import debug
-from soso.interval_tree import GroundStationPassInterval, SatelliteInterval
+from soso.interval_tree import SatelliteInterval
 from soso.job import Job
-from soso.network_flow import \
-    GroundStationPassTimeSlot, \
-    GroundStationPassToSinkEdge, \
+from soso.network_flow.edge_types import \
     JobToSatelliteTimeSlotEdge, \
-    RateLimiter, \
-    RateLimiterEdge, \
     SatelliteTimeSlot, \
-    SatelliteTimeSlotToRateLimiter, \
+    SatelliteTimeSlotToSinkEdge, \
     SatelliteToList, \
     SourceToJobEdge
 
@@ -40,14 +36,11 @@ from soso.network_flow import \
 def plot(
         G: nx.DiGraph,
         satellite_intervals: SatelliteToList[SatelliteInterval],
-        ground_station_passes: SatelliteToList[GroundStationPassInterval],
         jobs: List[Job],
         satellites: List[EarthSatellite],
         source_edges: List[SourceToJobEdge],
         job_to_sat_edges: SatelliteToList[JobToSatelliteTimeSlotEdge],
-        sat_to_rate_limiter_edges: SatelliteToList[SatelliteTimeSlotToRateLimiter],
-        rate_limiter_to_ground_station: SatelliteToList[RateLimiterEdge],
-        ground_station_to_sink_edges: SatelliteToList[GroundStationPassToSinkEdge],
+        sat_to_sink_edges: SatelliteToList[SatelliteTimeSlotToSinkEdge],
         title: str,
         debug_mode: Optional[Path | bool] = None    
     ) -> None:
@@ -104,25 +97,9 @@ def plot(
                     for sat, intervals in satellite_intervals.items()
                         for interval in intervals
             ],
-            'd': [
-                RateLimiter(SatelliteTimeSlot(sat, interval.begin, interval.end))
-                    for sat, intervals in satellite_intervals.items()
-                        for interval in intervals
-            ],
-            'e': [
-                GroundStationPassTimeSlot(
-                    sat,
-                    interval.ground_station,
-                    interval.begin,
-                    interval.end
-                )
-                    for sat, intervals in ground_station_passes.items()
-                        for interval in intervals
-            ],
-            'f': ['sink']
+            'd': ['sink']
         }
     )
-
 
     def array_op(x):
         coords = pos[x]
@@ -131,11 +108,6 @@ def plot(
         elif isinstance(x, SatelliteTimeSlot):
             a = coords[0]
             return np.array((coords[0], coords[1]*1.2))
-        elif isinstance(x, RateLimiter):
-            a = coords[0]
-            return np.array((coords[0], coords[1]*1.2))
-        elif isinstance(x, GroundStationPassTimeSlot):
-            return np.array((coords[0], coords[1]*10))
         else:
             return np.array((coords[0], coords[1]))
 
@@ -158,18 +130,6 @@ def plot(
     nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-4'], node_color=soso4_color, node_size = 5, edgecolors='black', linewidths=0.1)
     nx.draw_networkx_nodes(G, pos, nodelist=[SatelliteTimeSlot(sat, interval.begin, interval.end) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-5'], node_color=soso5_color, node_size = 5, edgecolors='black', linewidths=0.1)
 
-    nx.draw_networkx_nodes(G, pos, nodelist=[RateLimiter(SatelliteTimeSlot(sat, interval.begin, interval.end)) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-1'], node_color=soso1_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[RateLimiter(SatelliteTimeSlot(sat, interval.begin, interval.end)) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-2'], node_color=soso2_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[RateLimiter(SatelliteTimeSlot(sat, interval.begin, interval.end)) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-3'], node_color=soso3_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[RateLimiter(SatelliteTimeSlot(sat, interval.begin, interval.end)) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-4'], node_color=soso4_color, node_size = 5, edgecolors='black', linewidths=0.1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[RateLimiter(SatelliteTimeSlot(sat, interval.begin, interval.end)) for sat, interval in satellite_intervals.items() for interval in interval if sat.name == 'SOSO-5'], node_color=soso5_color, node_size = 5, edgecolors='black', linewidths=0.1)
-
-    nx.draw_networkx_nodes(G, pos, nodelist=[GroundStationPassTimeSlot(sat, interval.ground_station, interval.begin, interval.end) for sat, interval in ground_station_passes.items() for interval in interval if sat.name == 'SOSO-1'], edgecolors=soso1_color, node_size = 5, node_color='white', linewidths=1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[GroundStationPassTimeSlot(sat, interval.ground_station, interval.begin, interval.end) for sat, interval in ground_station_passes.items() for interval in interval if sat.name == 'SOSO-2'], edgecolors=soso2_color, node_size = 5, node_color='white', linewidths=1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[GroundStationPassTimeSlot(sat, interval.ground_station, interval.begin, interval.end) for sat, interval in ground_station_passes.items() for interval in interval if sat.name == 'SOSO-3'], edgecolors=soso3_color, node_size = 5, node_color='white', linewidths=1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[GroundStationPassTimeSlot(sat, interval.ground_station, interval.begin, interval.end) for sat, interval in ground_station_passes.items() for interval in interval if sat.name == 'SOSO-4'], edgecolors=soso4_color, node_size = 5, node_color='white', linewidths=1)
-    nx.draw_networkx_nodes(G, pos, nodelist=[GroundStationPassTimeSlot(sat, interval.ground_station, interval.begin, interval.end) for sat, interval in ground_station_passes.items() for interval in interval if sat.name == 'SOSO-5'], edgecolors=soso5_color, node_size = 5, node_color='white', linewidths=1)
-
     nx.draw_networkx_nodes(G, pos, nodelist=['source'], node_color=source_color, node_size = 15, edgecolors='black', linewidths=0.75)
     nx.draw_networkx_nodes(G, pos, nodelist=['sink'], node_color=sink_color, node_size = 15)
 
@@ -181,23 +141,11 @@ def plot(
     nx.draw_networkx_edges(G, pos, edgelist=job_to_sat_edges[satellites[3]], edge_color=soso4_color, arrows=False)
     nx.draw_networkx_edges(G, pos, edgelist=job_to_sat_edges[satellites[4]], edge_color=soso5_color, arrows=False)
 
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_rate_limiter_edges[satellites[0]], edge_color=soso1_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_rate_limiter_edges[satellites[1]], edge_color=soso2_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_rate_limiter_edges[satellites[2]], edge_color=soso3_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_rate_limiter_edges[satellites[3]], edge_color=soso4_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=sat_to_rate_limiter_edges[satellites[4]], edge_color=soso5_color, arrows=False)
-
-    nx.draw_networkx_edges(G, pos, edgelist=rate_limiter_to_ground_station[satellites[0]], edge_color=soso1_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=rate_limiter_to_ground_station[satellites[1]], edge_color=soso2_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=rate_limiter_to_ground_station[satellites[2]], edge_color=soso3_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=rate_limiter_to_ground_station[satellites[3]], edge_color=soso4_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=rate_limiter_to_ground_station[satellites[4]], edge_color=soso5_color, arrows=False)
-
-    nx.draw_networkx_edges(G, pos, edgelist=ground_station_to_sink_edges[satellites[0]], edge_color=soso1_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=ground_station_to_sink_edges[satellites[1]], edge_color=soso2_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=ground_station_to_sink_edges[satellites[2]], edge_color=soso3_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=ground_station_to_sink_edges[satellites[3]], edge_color=soso4_color, arrows=False)
-    nx.draw_networkx_edges(G, pos, edgelist=ground_station_to_sink_edges[satellites[4]], edge_color=soso5_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[0]], edge_color=soso1_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[1]], edge_color=soso2_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[2]], edge_color=soso3_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[3]], edge_color=soso4_color, arrows=False)
+    nx.draw_networkx_edges(G, pos, edgelist=sat_to_sink_edges[satellites[4]], edge_color=soso5_color, arrows=False)
 
     plt.title(title)
     # Create a custom legend
@@ -209,21 +157,15 @@ def plot(
         plt.Line2D([0], [0], marker='o', color=soso2_color, lw=0, markersize=5, label='Satellite 2 Timeslots'),
         plt.Line2D([0], [0], marker='o', color=soso3_color, lw=0, markersize=5, label='Satellite 3 Timeslots'),
         plt.Line2D([0], [0], marker='o', color=soso4_color, lw=0, markersize=5, label='Satellite 4 Timeslots'),
-        plt.Line2D([0], [0], marker='o', color=soso5_color, lw=0, markersize=5, label='Satellite 5 Timeslots'),
-        plt.Line2D([0], [0], marker='o', color=soso1_color, fillstyle='none', linewidth=1, lw=0, markersize=5, label='Satellite 1 Ground Station Passes'),
-        plt.Line2D([0], [0], marker='o', color=soso2_color, fillstyle='none', linewidth=1, lw=0, markersize=5, label='Satellite 2 Ground Station Passes'),
-        plt.Line2D([0], [0], marker='o', color=soso3_color, fillstyle='none', linewidth=1, lw=0, markersize=5, label='Satellite 3 Ground Station Passes'),
-        plt.Line2D([0], [0], marker='o', color=soso4_color, fillstyle='none', linewidth=1, lw=0, markersize=5, label='Satellite 4 Ground Station Passes'),
-        plt.Line2D([0], [0], marker='o', color=soso5_color, fillstyle='none', linewidth=1, lw=0, markersize=5, label='Satellite 5 Ground Station Passes')
+        plt.Line2D([0], [0], marker='o', color=soso5_color, lw=0, markersize=5, label='Satellite 5 Timeslots')
     ]
 
     plt.text(0.01, 0.495, 'source', transform=ax.transAxes)
     plt.text(0.95, 0.495, 'sink', transform=ax.transAxes)
+
     plt.text(0.01, 0.02, 'Flow Source\n(Conceptual)', transform=ax.transAxes)
     plt.text(0.22, 0.02, 'Jobs', transform=ax.transAxes)
     plt.text(0.39, 0.02, 'Satellite Job\nTime Slots', transform=ax.transAxes)
-    plt.text(0.56, 0.02, '1-1 Mapping for\nFlow Limiting', transform=ax.transAxes)
-    plt.text(0.74, 0.02, 'Ground Station\nPass Time Slots', transform=ax.transAxes)
     plt.text(0.9, 0.02, 'Flow Sink\n(Conceptual)', transform=ax.transAxes)
 
     # Add the legend to the axis
