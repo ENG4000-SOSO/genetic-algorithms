@@ -409,7 +409,7 @@ def generate_population(
     # Generate individuals in the population
     population: List[Individual] = []
 
-    for _ in range(POPULATION_SIZE):
+    for _ in range(POPULATION_SIZE - 1):
         genome: SatelliteToList[List[Literal[0, 1]]] = {
             sat: [
                 [0 if random.random() > INITIAL_ENABLE_PROBABILITY else 1 for job in interval.data]
@@ -420,6 +420,16 @@ def generate_population(
 
         individual = Individual(genome, problem_instance)
         population.append(individual)
+
+    # Inject one individual with all 1s (everything enabled)
+    genome: SatelliteToList[List[Literal[0, 1]]] = {
+        sat: [
+            [1 for job in interval.data] for interval in intervals]
+            for sat, intervals in satellite_intervals.items()
+    }
+
+    individual = Individual(genome, problem_instance)
+    population.append(individual)
 
     return problem_instance, population
 
