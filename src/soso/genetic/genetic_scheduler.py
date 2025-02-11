@@ -497,14 +497,34 @@ def crossover(
         new_genome = {sat: [] for sat in problem_instance.satellites}
         for sat in problem_instance.satellites:
             for i in range(len(problem_instance.satellite_intervals[sat])):
-                parent = parent1 if random.random() > 0.5 else parent2
-                new_genome[sat].append(parent.genome[sat][i])
+                # If either of the parents has negative fitness, just choose the
+                # one with the higher fitness (because using `random.choices`
+                # does not work with negative weights)
+                if parent1.fitness < 0 or parent2.fitness < 0:
+                    if parent1.fitness >= parent2.fitness:
+                        chosen_parent = parent1
+                    else:
+                        chosen_parent = parent2
+                else:
+                    parents = [parent1, parent2]
+                    fitnesses = [parent1.fitness, parent2.fitness]
 
-        # return Individual(new_genome, new_fitness)
+                    # Choose one of the two parents randomly where the parent
+                    # with the higher fitness has a higher probability of being
+                    # chosen
+                    chosen_parent = random.choices(
+                        parents,
+                        weights=fitnesses
+                    )[0]
+
+                # Use the chromosome from the chosen parent
+                chromosome = chosen_parent.genome[sat][i]
+                new_genome[sat].append(chromosome)
+
         return Individual(new_genome, problem_instance)
 
-    # If not crossing over, just return one of the parents
-    return parent1 if random.random() > 0.5 else parent2
+    # If not crossing over, just return the parent with the higher fitness
+    return parent1 if parent1.fitness > parent2.fitness else parent2
 
 
 def mutate(
