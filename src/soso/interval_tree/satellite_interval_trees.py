@@ -391,7 +391,8 @@ def get_start_and_end_times_of_mission(jobs: List[Job], ts: Timescale):
 
     # End time is the latest end time of all the jobs
     t1 = ts.from_datetime(
-        max(job.end for job in jobs).replace(tzinfo=datetime.timezone.utc) + datetime.timedelta(days=10)
+        max(job.end for job in jobs).replace(tzinfo=datetime.timezone.utc)
+            + datetime.timedelta(days=2)
     )
 
     return t0, t1
