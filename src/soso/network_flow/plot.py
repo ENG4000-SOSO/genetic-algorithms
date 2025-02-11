@@ -26,12 +26,9 @@ from soso.interval_tree import GroundStationPassInterval, SatelliteInterval
 from soso.job import Job
 from soso.network_flow.edge_types import \
     GroundStationPassTimeSlot, \
-    GroundStationPassToSinkEdge, \
     JobToSatelliteTimeSlotEdge, \
     RateLimiter, \
-    RateLimiterEdge, \
     SatelliteTimeSlot, \
-    SatelliteTimeSlotToRateLimiter, \
     SatelliteToList, \
     SourceToJobEdge, SatelliteTimeSlotToSinkEdge
 

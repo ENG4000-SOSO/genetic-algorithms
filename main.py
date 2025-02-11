@@ -62,14 +62,14 @@ args = parser.parse_args()
 a = time.time()
 
 if args.alg_type == 'network':
-    solution = run_network_flow(satellites, jobs, satellite_intervals, ground_station_passes, True)
+    solution = run_network_flow(satellites, jobs, satellite_intervals, True)
     for satellite, timeslots in solution.items():
         print(f'Satellite: {satellite.name}')
         for timeslot in timeslots:
             print(f'    {timeslot.job} in {timeslot.satellite_timeslot.satellite.name} from {timeslot.satellite_timeslot.start.strftime("%B %d %Y @ %I:%M %p")} to {timeslot.satellite_timeslot.end.strftime("%B %d %Y @ %I:%M %p")}, downlinked at {"?"} from {"?"} to {"?"}')
 
 elif args.alg_type == 'bin':
-    solution_part1 = run_network_flow(satellites, jobs, satellite_intervals, ground_station_passes, True)
+    solution_part1 = run_network_flow(satellites, jobs, satellite_intervals, True)
     solution = schedule_downlinks(satellites, solution_part1, ground_station_passes)
     print('=======')
     for satellite, dtos in solution.items():
