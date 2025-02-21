@@ -87,6 +87,38 @@ class ScheduleUnit:
     '''
 
 
+@dataclass
+class BinPackingResult:
+    '''
+    The result of the bin packing algorithm.
+    '''
+
+    result: SatelliteToList[ScheduleUnit]
+    '''
+    The solution to the bin packing problem.
+    '''
+
+    infeasible_jobs: List[Job]
+    '''
+    Jobs that could not be scheduled due to infeasibility.
+    '''
+
+    @staticmethod
+    def empty(satellites: List[EarthSatellite]) -> 'BinPackingResult':
+        '''
+        Returns an empty `BinPackingResult` object with the given satellites.
+        This is used for the edge case where there are no satellite intervals or
+        ground station passes to optimize.
+
+        Args:
+            satellites: The list of satellites.
+
+        Returns:
+            An empty `BinPackingResult` object.
+        '''
+        return BinPackingResult({sat: [] for sat in satellites}, [])
+
+
 @debug
 def debug_size_and_capacity_information(
     satellite_timeslots: List[JobToSatelliteTimeSlotEdge],
@@ -121,6 +153,44 @@ def debug_size_and_capacity_information(
     )
 
 
+def get_unpacked_jobs(
+    satellite_timeslots: SatelliteToList[JobToSatelliteTimeSlotEdge],
+    solution: SatelliteToList[ScheduleUnit]
+) -> List[Job]:
+    '''
+    Gets all jobs that were not scheduled through the optimization process by
+    calculating the set difference between jobs in `satellite_timeslots` and
+    jobs in `solution` (the solution to the bin packing algorithm).
+
+    Args:
+        satellite_timeslots: Dictionary mapping each satellite to
+            job-to-timeslot edges from the network flow module.
+
+        solution: The solution to the bin packing problem, which is a full
+            schedule of jobs in satellites with downlinking information.
+
+    Returns:
+        The list of jobs that were scheduled in the network flow solution, but
+        not in the bin packing solution.
+    '''
+
+    initial_jobs: Set[Job] = set()
+
+    # Collect all scheduled jobs from job-to-timeslot edges
+    for edges in satellite_timeslots.values():
+        for edge in edges:
+            initial_jobs.add(edge.job)
+
+    bin_packed_jobs: Set[Job] = set()
+
+    # Collect all scheduled jobs from the bin packing solution
+    for schedule_units in solution.values():
+        for schedule_unit in schedule_units:
+            bin_packed_jobs.add(schedule_unit.job)
+
+    return list(initial_jobs.difference(bin_packed_jobs))
+
+
 def get_downlinkable_jobs(
     downlinking_opportunities: SatelliteToList[DownlinkingOpportunities]
 ) -> Set[Job]:
@@ -129,14 +199,12 @@ def get_downlinkable_jobs(
     opportunities.
     '''
 
-    return set(
-        [
-            opportunity.satellite_timeslot.job
-                for sat, opportunities in downlinking_opportunities.items()
-                    for opportunity in opportunities
-                        if len(opportunities) > 0
-        ]
-    )
+    return set([
+        opportunity.satellite_timeslot.job
+            for sat, opportunities in downlinking_opportunities.items()
+                for opportunity in opportunities
+                    if len(opportunities) > 0
+    ])
 
 
 @debug
@@ -366,7 +434,7 @@ def schedule_downlinks(
     satellites: List[EarthSatellite],
     satellite_timeslots: SatelliteToList[JobToSatelliteTimeSlotEdge],
     ground_station_passes: SatelliteToList[GroundStationPassInterval]
-) -> SatelliteToList[ScheduleUnit]:
+) -> BinPackingResult:
     '''
     Attempts to assign a ground station pass for downlinking for each satellite
     timeslot.
@@ -382,6 +450,13 @@ def schedule_downlinks(
         A full schedule, including jobs, satellite timeslots to complete the
         jobs, and ground station passes to downlink the jobs.
     '''
+
+    if len(satellite_timeslots) == 0 or len(ground_station_passes) == 0:
+        logger.info(
+            'No satellite timeslots or ground station passes to optimize, '
+                'exiting early'
+        )
+        return BinPackingResult.empty(satellites)
 
     downlinking_opportunities: SatelliteToList[DownlinkingOpportunities] = {
         sat: [] for sat in satellites
@@ -418,4 +493,11 @@ def schedule_downlinks(
 
         solution[satellite] = satellite_schedule
 
-    return solution
+    # Get jobs that were "not packed" (a.k.a. could have been scheduled but were
+    # not as part of the optimization algorithm)
+    unpacked_jobs = get_unpacked_jobs(satellite_timeslots, solution)
+
+    return BinPackingResult(
+        solution,
+        unpacked_jobs
+    )

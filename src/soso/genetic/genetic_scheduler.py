@@ -67,7 +67,7 @@ from soso.network_flow.edge_types import SatelliteToList
 from soso.bin_packing.ground_station_bin_packing import \
     schedule_downlinks, \
     ScheduleUnit
-from soso.network_flow.network_flow_scheduler_improved import run_network_flow
+from soso.network_flow.network_flow_scheduler import run_network_flow
 from soso.outage_request import OutageRequest
 
 
@@ -137,12 +137,29 @@ class ProblemInstance:
     '''
 
 
+@dataclass
+class GeneticAlgorithmResult:
+    '''
+    A DTO containing the results of the genetic algorithm.
+    '''
+
+    result: SatelliteToList[ScheduleUnit]
+    '''
+    The result of the genetic algorithm.
+    '''
+
+    optimized_out_jobs: List[Job]
+    '''
+    Jobs that were not scheduled as part of the optimization process.
+    '''
+
+
 def optimize_schedule(
     satellites: List[EarthSatellite],
     jobs: List[Job],
     satellite_intervals: SatelliteToList[SatelliteInterval],
     ground_station_passes: SatelliteToList[GroundStationPassInterval]
-) -> SatelliteToList[ScheduleUnit]:
+) -> GeneticAlgorithmResult:
     '''
     Generate an optimized schedule using network flow and bin packing
     algorithms.
@@ -165,7 +182,7 @@ def optimize_schedule(
 
     # Run the network flow optimization scheduling algorithm to get the best
     # solution given non-restricted jobs
-    network_flow_solution = run_network_flow(
+    network_flow_result = run_network_flow(
         satellites,
         jobs,
         satellite_intervals
@@ -173,13 +190,25 @@ def optimize_schedule(
 
     # Run the bin packing algorithm to assign ground station passes to each
     # satellite timeslot for downlinking
-    solution = schedule_downlinks(
+    bin_packing_result = schedule_downlinks(
         satellites,
-        network_flow_solution,
+        network_flow_result.job_to_sat_edges,
         ground_station_passes
     )
 
-    return solution
+    # Get the jobs that were not scheduled as part of both of the network flow
+    # and bin packing optimization algorithms
+    network_flow_unscheduled_jobs = set(network_flow_result.optimized_out_jobs)
+    bin_packing_unscheduled_out_jobs = set(bin_packing_result.infeasible_jobs)
+
+    optimized_out_jobs = list(
+        network_flow_unscheduled_jobs.union(bin_packing_unscheduled_out_jobs)
+    )
+
+    return GeneticAlgorithmResult(
+        bin_packing_result.result,
+        optimized_out_jobs
+    )
 
 
 def get_satellite_intervals_from_genome(
@@ -290,18 +319,19 @@ class Individual:
         )
 
         # Optimize the schedule using network flow and bin packing algorithms
-        solution = optimize_schedule(
+        optimized_schedule = optimize_schedule(
             self.problem_instance.satellites,
             self.problem_instance.jobs,
             satellite_intervals,
             self.problem_instance.ground_station_passes
         )
+        result = optimized_schedule.result
 
         # Calculate the variance of the amount of jobs scheduled in each
         # satellite
         jobs_in_each_satellite = [
             len(schedule_units)
-                for satellite, schedule_units in solution.items()
+                for satellite, schedule_units in result.items()
         ]
         variance = np.var(jobs_in_each_satellite)
 
@@ -314,7 +344,7 @@ class Individual:
         # scheduled
         total_scheduled_job_priority_sum = sum(
             schedule_unit.job.priority.value
-                for satellite, schedule_units in solution.items()
+                for satellite, schedule_units in result.items()
                     for schedule_unit in schedule_units
         )
 
@@ -568,7 +598,7 @@ def run_genetic_algorithm(
     outage_requests: List[OutageRequest],
     satellite_intervals: SatelliteToList[SatelliteInterval],
     ground_station_passes: SatelliteToList[GroundStationPassInterval]
-) -> SatelliteToList[ScheduleUnit]:
+) -> GeneticAlgorithmResult:
     '''
     The main entry point to the genetic algorithm part of the SOSO scheduling
     algorithm.
@@ -624,7 +654,6 @@ def run_genetic_algorithm(
                 best_fitness = individual.fitness
 
         logger.info(f'Generation: {generation}, best fitness: {best_fitness}')
-
         # Generate a new population by selecting parents, crossing over genomes,
         # and mutating genomes
         new_population: List[Individual] = []

@@ -1,26 +1,41 @@
+'''
+Main script for running the scheduler from the command line in different ways.
+'''
+
+
 import argparse
+import json
 import logging
 import logging.config
 logging.config.fileConfig('logging_config.ini')
 import os
 from pathlib import Path
+import requests
 import time
 
 from skyfield.api import load
 
 from soso.genetic.genetic_scheduler import run_genetic_algorithm
 from soso.bin_packing.ground_station_bin_packing import schedule_downlinks
-from soso.network_flow.network_flow_scheduler_improved import run_network_flow
+from soso.network_flow.network_flow_scheduler import run_network_flow
 from soso.utils import \
     parse_ground_stations, \
     parse_jobs, \
     parse_outage_requests, \
-    parse_satellites
+    parse_satellites, \
+    parse_two_line_elements, \
+    print_api_result, \
+    print_bin_packing_result, \
+    print_genetic_result, \
+    print_network_flow_result, \
+    SchedulerServer
+from soso.interface import ScheduleOutput, ScheduleParameters
 from soso.interval_tree import generate_satellite_intervals
 
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+# Load timescale and ephemeris
 ts = load.timescale()
 eph = load('de421.bsp')
 
@@ -35,6 +50,7 @@ outage_request_data_dir = data_dir / 'outages'
 ground_station_data_dir = data_dir / 'ground_stations'
 
 # Parse satellites and orders data
+two_line_elements = parse_two_line_elements(satellite_data_dir)
 satellites = parse_satellites(satellite_data_dir, ts)
 jobs = parse_jobs(order_data_dir)
 outage_requests = parse_outage_requests(outage_request_data_dir, satellites)
@@ -43,52 +59,146 @@ ground_stations = parse_ground_stations(ground_station_data_dir)
 parse_t1 = time.time()
 logger.info(f'Parsing data took {parse_t1 - parse_t0} seconds')
 
-# Generate intervals for each satellite
-satellite_passes = generate_satellite_intervals(
-    satellites,
-    jobs,
-    outage_requests,
-    ground_stations,
-    ts,
-    eph
-)
-satellite_intervals = satellite_passes.satellite_intervals
-ground_station_passes = satellite_passes.ground_station_passes
-
+# Command line argument parser
 parser = argparse.ArgumentParser()
 parser.add_argument('alg_type', type=str)
 args = parser.parse_args()
 
-a = time.time()
+if args.alg_type in ['network', 'bin', 'genetic']:
 
-if args.alg_type == 'network':
-    solution = run_network_flow(satellites, jobs, satellite_intervals, True)
-    for satellite, timeslots in solution.items():
-        print(f'Satellite: {satellite.name}')
-        for timeslot in timeslots:
-            print(f'    {timeslot.job} in {timeslot.satellite_timeslot.satellite.name} from {timeslot.satellite_timeslot.start.strftime("%B %d %Y @ %I:%M %p")} to {timeslot.satellite_timeslot.end.strftime("%B %d %Y @ %I:%M %p")}, downlinked at {"?"} from {"?"} to {"?"}')
+    # Generate intervals for each satellite
+    satellite_passes = generate_satellite_intervals(
+        satellites,
+        jobs,
+        outage_requests,
+        ground_stations,
+        ts,
+        eph
+    )
+    satellite_intervals = satellite_passes.satellite_intervals
+    ground_station_passes = satellite_passes.ground_station_passes
 
-elif args.alg_type == 'bin':
-    solution_part1 = run_network_flow(satellites, jobs, satellite_intervals, True)
-    solution = schedule_downlinks(satellites, solution_part1, ground_station_passes)
-    print('=======')
-    for satellite, dtos in solution.items():
-        print(f'Satellite: {satellite.name}')
-        for dto in dtos:
-            print(f'    {dto.job} in {dto.job_timeslot.satellite.name} from {dto.job_timeslot.start.strftime("%B %d %Y @ %I:%M %p")} to {dto.job_timeslot.end.strftime("%B %d %Y @ %I:%M %p")}, downlinked at {dto.downlink_timeslot.ground_station.name} from {dto.downlink_timeslot.begin.strftime("%B %d %Y @ %I:%M %p")} to {dto.downlink_timeslot.end.strftime("%B %d %Y @ %I:%M %p")}')
+    # Network flow algorithm
+    if args.alg_type == 'network':
+        alg_t0 = time.time()
 
-elif args.alg_type == 'genetic':
-    solution = run_genetic_algorithm(satellites, jobs, outage_requests, satellite_intervals, ground_station_passes)
-    print('=======')
-    for satellite, dtos in solution.items():
-        print(f'Satellite: {satellite.name}')
-        for dto in dtos:
-            print(f'    {dto.job} in {dto.job_timeslot.satellite.name} from {dto.job_timeslot.start.strftime("%B %d %Y @ %I:%M %p")} to {dto.job_timeslot.end.strftime("%B %d %Y @ %I:%M %p")}, downlinked at {dto.downlink_timeslot.ground_station.name} from {dto.downlink_timeslot.begin.strftime("%B %d %Y @ %I:%M %p")} to {dto.downlink_timeslot.end.strftime("%B %d %Y @ %I:%M %p")}')
+        solution = run_network_flow(satellites, jobs, satellite_intervals, True)
+
+        alg_t1 = time.time()
+
+        print_network_flow_result(solution)
+
+        jobs_scheduled = sum(
+            [len(timeslots) for timeslots in solution.job_to_sat_edges.values()]
+        )
+        print(
+            f'{jobs_scheduled} out of {len(jobs)} jobs scheduled in '
+                f'{alg_t1 - alg_t0} seconds'
+        )
+
+    # Network flow and bin packing algorithm
+    elif args.alg_type == 'bin':
+        alg_t0 = time.time()
+
+        network_flow_solution = run_network_flow(
+            satellites,
+            jobs,
+            satellite_intervals,
+            True
+        )
+        solution = schedule_downlinks(
+            satellites,
+            network_flow_solution.job_to_sat_edges,
+            ground_station_passes
+        )
+
+        alg_t1 = time.time()
+
+        print_bin_packing_result(solution)
+
+        jobs_scheduled = sum(
+            [len(schedule_units) for schedule_units in solution.result.values()]
+        )
+        print(
+            f'{jobs_scheduled} out of {len(jobs)} jobs scheduled in '
+                f'{alg_t1 - alg_t0} seconds'
+        )
+
+    # Genetic algorithm (implicitly uses both network flow and bin packing
+    # algorithms)
+    elif args.alg_type == 'genetic':
+        alg_t0 = time.time()
+
+        solution = run_genetic_algorithm(
+            satellites,
+            jobs,
+            outage_requests,
+            satellite_intervals,
+            ground_station_passes
+        )
+
+        alg_t1 = time.time()
+
+        print_genetic_result(solution)
+
+        jobs_scheduled = sum(
+            [len(schedule_units) for schedule_units in solution.result.values()]
+        )
+        print(
+            f'{jobs_scheduled} out of {len(jobs)} jobs scheduled in '
+                f'{alg_t1 - alg_t0} seconds'
+        )
+
+elif args.alg_type == 'api':
+    try:
+        server = SchedulerServer()
+
+        server.start()
+
+        params = ScheduleParameters(
+            two_line_elements=two_line_elements,
+            jobs=jobs,
+            ground_stations=ground_stations,
+            outage_requests=outage_requests
+        )
+
+        alg_t0 = time.time()
+
+        # Send a test request
+        response = requests.post(
+            "http://127.0.0.1:8000/schedule",
+            headers={"Content-Type": "application/json"},
+            json=json.loads(params.model_dump_json())
+        )
+
+        if response.status_code == 200:
+            alg_t1 = time.time()
+
+            time.sleep(1)
+
+            solution = ScheduleOutput.model_validate(response.json())
+
+            print_api_result(solution)
+
+
+            jobs_scheduled = sum([
+                len(planned_orders)
+                    for planned_orders in solution.planned_orders.values()
+            ])
+            print(
+                f'{jobs_scheduled} out of {len(jobs)} jobs scheduled in '
+                    f'{alg_t1 - alg_t0} seconds'
+            )
+        else:
+            print(f'Response status: {response.status_code}')
+            print(response.content)
+
+    except Exception as e:
+        print('Error in API call')
+        print(e)
+
+    finally:
+        server.stop()
 
 else:
     raise Exception('Invalid command line argument option')
-
-b = time.time()
-
-print(f'{sum([len(timeslotlist) for timeslotlist in solution.values()])} out of {len(jobs)} scheduled in {b-a:.2f} seconds')
-print(f'{b-a} seconds')

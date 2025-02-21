@@ -6,9 +6,9 @@ additional data types to facilitate its functionality.
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
 
 from intervaltree import Interval
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class Priority(Enum):
@@ -21,27 +21,27 @@ class Priority(Enum):
     HIGH = 3
 
 
-class SatellitePassLocation:
+class SatellitePassLocation(BaseModel):
+    '''
+    Representation of a location the a satellite passes over.
+    '''
+
+    model_config = ConfigDict(frozen=True)
+
     name: str
+    '''
+    The name of the location.
+    '''
+
     latitude: float
+    '''
+    The latitude of the location.
+    '''
+
     longitude: float
-
-    def __init__(
-        self,
-        name: str,
-        latitude: float,
-        longitude: float
-    ):
-        if not name:
-            raise Exception('name missing')
-        if not latitude:
-            raise Exception('latitude missing')
-        if not longitude:
-            raise Exception('longitude missing')
-
-        self.name = name
-        self.latitude = latitude
-        self.longitude = longitude
+    '''
+    The longitude of the location.
+    '''
 
 
 class Job(SatellitePassLocation):
@@ -49,37 +49,44 @@ class Job(SatellitePassLocation):
     Representation of a job that a satellite can be asked to perform.
     '''
 
+    model_config = ConfigDict(
+        frozen=True,
+        json_encoders={datetime: lambda v: v.isoformat()}
+    )
+
     priority: Priority
+    '''
+    The priority of the job.
+    '''
+
     start: datetime
+    '''
+    The start time of the interval in which the job must be performed.
+    '''
+
     end: datetime
+    '''
+    The end time of the interval in which the job must be performed.
+    '''
+
     delivery: datetime
+    '''
+    The time by which the job must be delivered to a ground station.
+    '''
+
     size: float = 128_000_000 # TODO: MAKE THIS DYNAMIC
+    '''
+    The size of the image in bytes.
+    '''
 
-    def __init__(
-        self,
-        name: str,
-        start: str,
-        end: str,
-        delivery: str,
-        priority: str,
-        latitude: int,
-        longitude: int
-    ):
-        super().__init__(name, latitude, longitude)
-
-        if not start:
-            raise Exception('start time missing')
-        if not end:
-            raise Exception('end time missing')
-        if not delivery:
-            raise Exception('delivery time missing')
-        if not priority:
-            raise Exception('priority missing')
-
-        self.start = datetime.fromisoformat(start).replace(tzinfo=timezone.utc)
-        self.end = datetime.fromisoformat(end).replace(tzinfo=timezone.utc)
-        self.delivery = datetime.fromisoformat(delivery).replace(tzinfo=timezone.utc)
-        self.priority = Priority(priority)
+    @field_validator('start', 'end', 'delivery', mode='after')
+    @classmethod
+    def ensure_start_utc(cls, v: datetime) -> datetime:
+        '''
+        Ensures that the start, end, and delivery times have timezone
+        information.
+        '''
+        return v.replace(tzinfo=timezone.utc)
 
     def __str__(self):
         return f'{self.name} P{self.priority.value}'
@@ -96,39 +103,51 @@ class GroundStation(SatellitePassLocation):
     Representation of a job that a satellite can be asked to perform.
     '''
 
+    model_config = ConfigDict(frozen=True)
+
     height: float
+    '''
+    The elevation of the ground station.
+    '''
+
     mask: int
+    '''
+    The mask of the ground station.
+    '''
+
     uplink_rate: int
+    '''
+    The uplink rate of the ground station in Mbps.
+    '''
+
     downlink_rate: int
-
-    def __init__(
-        self,
-        name: str,
-        latitude: float,
-        longitude: float,
-        height: float,
-        mask: int,
-        uplink_rate: int,
-        downlink_rate: int
-    ):
-        super().__init__(name, latitude, longitude)
-
-        if not height:
-            raise Exception('height time missing')
-        if not mask:
-            raise Exception('mask time missing')
-        if not uplink_rate:
-            raise Exception('uplink_rate missing')
-        if not downlink_rate:
-            raise Exception('downlink_rate missing')
-
-        self.height = height
-        self.mask = mask
-        self.uplink_rate = uplink_rate
-        self.downlink_rate = downlink_rate
+    '''
+    The downlink rate of the ground station in Mbps.
+    '''
 
     def __str__(self):
         return f'{self.name} at lat: {self.latitude}, lon: {self.longitude}, height: {self.height}'
 
     def __repr__(self) -> str:
         return str(self)
+
+
+class TwoLineElement(BaseModel):
+    '''
+    Representation of a two-line element.
+    '''
+
+    name: str
+    '''
+    The name of the satellite represented by the two-line element.
+    '''
+
+    line1: str
+    '''
+    The first line of the two-line element.
+    '''
+
+    line2: str
+    '''
+    The second line of the two-line element.
+    '''
