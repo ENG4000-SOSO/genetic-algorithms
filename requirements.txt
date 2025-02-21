@@ -1,10 +1,18 @@
 absl-py==2.1.0
+annotated-types==0.7.0
+anyio==4.8.0
 basemap==1.4.1
 basemap-data==1.3.2
 certifi==2024.12.14
+charset-normalizer==3.4.1
+click==8.1.8
+colorama==0.4.6
 contourpy==1.3.1
 cycler==0.12.1
+fastapi==0.115.8
 fonttools==4.55.3
+h11==0.14.0
+idna==3.10
 immutabledict==4.2.1
 intervaltree==3.1.0
 jplephem==2.22
@@ -19,16 +27,23 @@ pandas==2.2.3
 pillow==11.1.0
 protobuf==5.26.1
 PuLP==2.9.0
+pydantic==2.10.6
+pydantic_core==2.27.2
 pyparsing==3.2.1
 pyproj==3.6.1
 pyright==1.1.393
 pyshp==2.3.1
 python-dateutil==2.9.0.post0
 pytz==2024.2
+requests==2.32.3
 sgp4==2.23
 six==1.17.0
 skyfield==1.49
+sniffio==1.3.1
 sortedcontainers==2.4.0
--e git+https://github.com/ENG4000-SOSO/genetic-algorithms.git@6027b64d0cb7deeac74eef694cdc7126a820c6e9#egg=soso
+-e git+https://github.com/ENG4000-SOSO/genetic-algorithms.git@0f2184efde30d18598e05295a744c0c6fd6e688d#egg=soso
+starlette==0.45.3
 typing_extensions==4.12.2
 tzdata==2024.2
+urllib3==2.3.0
+uvicorn==0.34.0
