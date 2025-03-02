@@ -9,7 +9,6 @@ logging.config.fileConfig('logging_config.ini')
 from fastapi import FastAPI
 
 from soso.interface import run, ScheduleParameters, ScheduleOutput
-from soso.bin_packing.ground_station_bin_packing import ScheduleUnit
 
 
 app = FastAPI()

@@ -137,6 +137,8 @@ class TwoLineElement(BaseModel):
     Representation of a two-line element.
     '''
 
+    model_config = ConfigDict(frozen=True)
+
     name: str
     '''
     The name of the satellite represented by the two-line element.

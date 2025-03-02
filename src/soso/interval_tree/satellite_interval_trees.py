@@ -20,7 +20,7 @@ from skyfield.api import EarthSatellite, Time, Timescale, wgs84
 from soso.debug import debug
 from soso.interval_tree import GroundStationPassInterval, SatelliteInterval
 from soso.job import GroundStation, Job, SatellitePassLocation
-from soso.outage_request import OutageRequest
+from soso.outage_request import GroundStationOutageRequest, OutageRequest
 
 
 @dataclass
@@ -305,6 +305,7 @@ def find_pass_events(
 def generate_ground_station_pass_intervals(
     satellites: List[EarthSatellite],
     ground_stations: List[GroundStation],
+    ground_station_outage_requests: List[GroundStationOutageRequest],
     t0: Time,
     t1: Time,
     eph: Any
@@ -319,6 +320,9 @@ def generate_ground_station_pass_intervals(
             passes.
 
         ground_stations: The list of ground stations.
+
+        ground_station_outage_requests: The list of ground station outage
+            requests.
 
         t0: The start time of the space mission.
 
@@ -353,9 +357,20 @@ def generate_ground_station_pass_intervals(
 
             # Add the pass events to the dictionary
             for begin, end in events:
-                ground_station_pass_intervals[sat].append(
-                    GroundStationPassInterval(begin, end, ground_station)
-                )
+                # Check if this pass event is blocked by an outage request
+                can_schedule = True
+                for outage_request in ground_station_outage_requests:
+                    if outage_request.ground_station != ground_station:
+                        continue
+                    if begin > outage_request.end or end < outage_request.start:
+                        pass
+                    else:
+                        can_schedule = False
+
+                if can_schedule:
+                    ground_station_pass_intervals[sat].append(
+                        GroundStationPassInterval(begin, end, ground_station)
+                    )
 
     return ground_station_pass_intervals
 
@@ -589,6 +604,7 @@ def generate_satellite_intervals(
     jobs: List[Job],
     outage_requests: List[OutageRequest],
     ground_stations: List[GroundStation],
+    ground_station_outage_requests: List[GroundStationOutageRequest],
     ts: Timescale,
     eph: Any
 ) -> SatellitePasses:
@@ -606,6 +622,9 @@ def generate_satellite_intervals(
         outage_requests: The list of (non-negotiable) outage requests.
 
         ground_stations: The list of ground stations.
+
+        ground_station_outage_requests: The list of ground station outage
+            requests.
 
         ts: The Skyfield timescale being used to simulate events in the future.
 
@@ -648,13 +667,14 @@ def generate_satellite_intervals(
     ground_station_passes = generate_ground_station_pass_intervals(
         satellites,
         ground_stations,
+        ground_station_outage_requests,
         t0,
         t1,
         eph
     )
 
     tree_t1 = time.time()
-    logger.debug(f'Making the interval trees took {tree_t1 - tree_t0} seconds')
+    logger.info(f'Making the interval trees took {tree_t1 - tree_t0} seconds')
 
     # Convert the interval trees to lists of intervals to simplify the interface
     unfiltered_satellite_intervals = convert_trees_to_satellite_intervals(

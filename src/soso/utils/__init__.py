@@ -24,7 +24,7 @@ from soso.job import GroundStation
 from soso.job import Job, TwoLineElement
 from soso.network_flow.edge_types import SatelliteToList
 from soso.network_flow.network_flow_scheduler import NetworkFlowResult
-from soso.outage_request import OutageRequest
+from soso.outage_request import MaintenanceOrder, OutageRequest, Window, RepeatCycle, Frequency, handle_repeated_outages
 
 
 FORMAT = '%B %d %Y @ %I:%M %p'
@@ -63,7 +63,7 @@ def counter_generator():
         i += 1
 
 
-def parse_jobs(order_data_dir: Path) -> List[Job]:
+def parse_jobs(order_data_dir: Path, name_prefix: str = '') -> List[Job]:
     '''
     Parses orders from a directory of JSON files.
 
@@ -88,7 +88,7 @@ def parse_jobs(order_data_dir: Path) -> List[Job]:
                 #     continue
 
                 job = Job(
-                    name=f'Job {c}',
+                    name=f'{name_prefix}Job {c}',
                     start=data['ImageStartTime'],
                     end=data['ImageEndTime'],
                     delivery=data['DeliveryTime'],
@@ -138,6 +138,47 @@ def parse_outage_requests(
                 outage_request.assign_satellite(sat_name_to_sat)
                 outage_requests.append(outage_request)
 
+    return outage_requests
+
+
+def parse_maintenance_orders(
+    maintenance_order_data_dir: Path,
+    satellites: List[EarthSatellite]
+) -> List[OutageRequest]:
+    '''
+    Parses outage requests from a directory of JSON files.
+
+    Args:
+        outage_request_data_dir: The file path of the directory containing the
+            JSON files representing the outage requests.
+
+        satellites: The list of satellites. This will be used to add the
+            satellite reference to the outage request for that satellite.
+
+    Returns:
+        The list of parsed outage requests.
+    '''
+    outage_requests: List[OutageRequest] = []
+    counter = counter_generator()
+    sat_name_to_sat: Dict[str, EarthSatellite] = {
+        cast(str, sat.name): sat for sat in satellites
+    }
+
+    for filename in os.listdir(maintenance_order_data_dir):
+        if filename.endswith('.json'):
+            full_path = maintenance_order_data_dir / filename
+            with open(full_path, 'r') as f:
+                data = json.load(f)
+                # if 'RepeatCycle' in data and 'Repetition' in data['RepeatCycle'] and data['RepeatCycle']['Repetition'] != 'Null':
+                for i in range(int(data['RepeatCycle']['Repetition'])):
+                    maintenance_order = MaintenanceOrder.model_validate_json(data)
+                    outage_requests += handle_repeated_outages(maintenance_order, satellites)
+                # else:
+                    # outage_requests.append(
+                        # OutageRequest(
+                            # name=date['']
+                        # )
+                    # )
     return outage_requests
 
 
@@ -236,7 +277,7 @@ def parse_ground_stations(ground_station_data_dir: Path) -> List[GroundStation]:
     return ground_stations
 
 
-def print_network_flow_result(result: NetworkFlowResult) -> None:
+def print_network_flow_result(result: NetworkFlowResult, style: str = "") -> None:
     '''
     Prints the result of the network flow scheduling algorithm.
 
@@ -246,19 +287,20 @@ def print_network_flow_result(result: NetworkFlowResult) -> None:
     '''
 
     for satellite, timeslots in result.job_to_sat_edges.items():
-        print(f'Satellite: {satellite.name}')
+        print(style + f'Satellite: {satellite.name}')
         for timeslot in timeslots:
             job_start = timeslot.satellite_timeslot.start.strftime(FORMAT)
             job_end = timeslot.satellite_timeslot.end.strftime(FORMAT)
             print(
-                f'{TAB}{timeslot.job} in '
+                style +
+                    f'{TAB}{timeslot.job} in '
                     f'{timeslot.satellite_timeslot.satellite.name} '
                     f'from {job_start} to {job_end}, '
                     f'downlinked at {"?"} from {"?"} to {"?"}'
             )
 
 
-def print_full_schedule(result: SatelliteToList[ScheduleUnit]):
+def print_full_schedule(result: SatelliteToList[ScheduleUnit], style: str = ""):
     '''
     Prints the full schedule of jobs for each satellite.
 
@@ -269,21 +311,22 @@ def print_full_schedule(result: SatelliteToList[ScheduleUnit]):
     '''
 
     for satellite, dtos in result.items():
-        print(f'Satellite: {satellite.name}')
+        print(style + f'Satellite: {satellite.name}')
         for dto in dtos:
             job_start = dto.job_timeslot.start.strftime(FORMAT)
             job_end = dto.job_timeslot.end.strftime(FORMAT)
             downlink_start = dto.downlink_timeslot.begin.strftime(FORMAT)
             downlink_end = dto.downlink_timeslot.end.strftime(FORMAT)
             print(
-                f'{TAB}{dto.job} in {dto.job_timeslot.satellite.name} '
+                style +
+                    f'{TAB}{dto.job} in {dto.job_timeslot.satellite.name} '
                     f'from {job_start} to {job_end}, '
                     f'downlinked at {dto.downlink_timeslot.ground_station.name} '
                     f'from {downlink_start} to {downlink_end}'
             )
 
 
-def print_bin_packing_result(result: BinPackingResult) -> None:
+def print_bin_packing_result(result: BinPackingResult, style: str = "") -> None:
     '''
     Prints the result of the bin packing scheduling algorithm.
 
@@ -291,10 +334,10 @@ def print_bin_packing_result(result: BinPackingResult) -> None:
         result: The result of the bin packing scheduling algorithm, containing
             the schedule units (job and downlink times) for each satellite.
     '''
-    print_full_schedule(result.result)
+    print_full_schedule(result.result, style)
 
 
-def print_genetic_result(result: GeneticAlgorithmResult) -> None:
+def print_genetic_result(result: GeneticAlgorithmResult, style: str = "") -> None:
     '''
     Prints the result of the genetic algorithm scheduling.
 
@@ -302,10 +345,10 @@ def print_genetic_result(result: GeneticAlgorithmResult) -> None:
         result: The result of the genetic algorithm scheduling, containing the
             schedule units (job and downlink times) for each satellite.
     '''
-    print_full_schedule(result.result)
+    print_full_schedule(result.result, style)
 
 
-def print_api_result(result: ScheduleOutput):
+def print_api_result(result: ScheduleOutput, style: str = ""):
     '''
     Prints the result of the API response of the full scheduling algorithm.
 
@@ -315,28 +358,31 @@ def print_api_result(result: ScheduleOutput):
     '''
 
     for satellite_name, dtos in result.planned_orders.items():
-        print(f'Satellite: {satellite_name}')
+        print(style + f'Satellite: {satellite_name}')
         for dto in dtos:
             job_start = dto.job_begin.strftime(FORMAT)
             job_end = dto.job_end.strftime(FORMAT)
             downlink_start = dto.downlink_begin.strftime(FORMAT)
             downlink_end = dto.downlink_end.strftime(FORMAT)
             print(
-                f'{TAB}{dto.job} in {dto.satellite_name} '
+                style +
+                    f'{TAB}{dto.job} in {dto.satellite_name} '
                     f'from {job_start} to {job_end}, '
                     f'downlinked at {dto.ground_station_name} '
                     f'from {downlink_start} to {downlink_end}'
             )
-    print(f'Impossible orders: {result.impossible_orders}')
+    print(style + f'Impossible orders: {result.impossible_orders}')
     print(
-        f'Impossible orders from ground stations: '
+        style +
+            f'Impossible orders from ground stations: '
             f'{result.impossible_orders_from_ground_stations}'
     )
     print(
-        f'Impossible orders from outages: '
+        style +
+            f'Impossible orders from outages: '
             f'{result.impossible_orders_from_outages}'
     )
-    print(f'Rejected orders: {result.rejected_orders}')
+    print(style + f'Rejected orders: {result.rejected_orders}')
 
 
 class SchedulerServer:

@@ -25,6 +25,7 @@ https://developers.google.com/optimization/pack/bin_packing.
 
 from dataclasses import dataclass
 import logging
+import time
 from typing import List, Set
 
 from ortools.linear_solver import pywraplp
@@ -458,6 +459,8 @@ def schedule_downlinks(
         )
         return BinPackingResult.empty(satellites)
 
+    t0 = time.time()
+
     downlinking_opportunities: SatelliteToList[DownlinkingOpportunities] = {
         sat: [] for sat in satellites
     }
@@ -496,6 +499,9 @@ def schedule_downlinks(
     # Get jobs that were "not packed" (a.k.a. could have been scheduled but were
     # not as part of the optimization algorithm)
     unpacked_jobs = get_unpacked_jobs(satellite_timeslots, solution)
+
+    t1 = time.time()
+    logger.info(f'Bin packing took {t1-t0} seconds')
 
     return BinPackingResult(
         solution,

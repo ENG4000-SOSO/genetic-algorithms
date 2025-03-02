@@ -247,7 +247,7 @@ def debug_network_info(
     for job in unscheduled_jobs:
         logger.debug(f'{job} not scheduled')
 
-    logger.info(
+    logger.debug(
         f'Out of {len(jobs)} jobs, {len(scheduled_jobs)} were '
             f'scheduled, {len(unscheduled_jobs)} were not, '
             f'({len(unschedulable_jobs)} jobs were not possible to be '
@@ -434,7 +434,7 @@ def run_network_flow(
         are representations of a job scheduled in a time slot.
     '''
 
-    logger.info('Starting network flow algorithm')
+    logger.debug('Starting network flow algorithm')
 
     alg_t0 = time.time()
 

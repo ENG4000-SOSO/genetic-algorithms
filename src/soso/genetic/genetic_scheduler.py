@@ -71,12 +71,12 @@ from soso.network_flow.network_flow_scheduler import run_network_flow
 from soso.outage_request import OutageRequest
 
 
-POPULATION_SIZE = 25
+POPULATION_SIZE = 5
 '''
 The number of problem instances to be considering at any given time.
 '''
 
-GENERATIONS = 25
+GENERATIONS = 5
 '''
 The number of iterations of the genetic algorithm.
 '''
@@ -196,13 +196,22 @@ def optimize_schedule(
         ground_station_passes
     )
 
-    # Get the jobs that were not scheduled as part of both of the network flow
-    # and bin packing optimization algorithms
-    network_flow_unscheduled_jobs = set(network_flow_result.optimized_out_jobs)
-    bin_packing_unscheduled_out_jobs = set(bin_packing_result.infeasible_jobs)
+    # # Get the jobs that were not scheduled as part of both of the network flow
+    # # and bin packing optimization algorithms
+    # network_flow_unscheduled_jobs = set(network_flow_result.optimized_out_jobs)
+    # bin_packing_unscheduled_out_jobs = set(bin_packing_result.infeasible_jobs)
 
+    # optimized_out_jobs = list(
+    #     network_flow_unscheduled_jobs.union(bin_packing_unscheduled_out_jobs)
+    # )
     optimized_out_jobs = list(
-        network_flow_unscheduled_jobs.union(bin_packing_unscheduled_out_jobs)
+        set(jobs).difference(
+            set(
+                schedule_unit.job
+                    for sat, schedule_units in bin_packing_result.result.items()
+                        for schedule_unit in schedule_units
+            )
+        )
     )
 
     return GeneticAlgorithmResult(

@@ -13,6 +13,7 @@ from pathlib import Path
 import requests
 import time
 
+from colorama import Fore
 from skyfield.api import load
 
 from soso.genetic.genetic_scheduler import run_genetic_algorithm
@@ -72,6 +73,7 @@ if args.alg_type in ['network', 'bin', 'genetic']:
         jobs,
         outage_requests,
         ground_stations,
+        [],
         ts,
         eph
     )
@@ -149,17 +151,21 @@ if args.alg_type in ['network', 'bin', 'genetic']:
                 f'{alg_t1 - alg_t0} seconds'
         )
 
-elif args.alg_type == 'api':
+elif args.alg_type in ['api-full', 'api-request']:
     try:
-        server = SchedulerServer()
-
-        server.start()
+        if args.alg_type == 'api-full':
+            server = SchedulerServer()
+            server.start()
+        else:
+            server = None
 
         params = ScheduleParameters(
+            input_hash=None,
             two_line_elements=two_line_elements,
             jobs=jobs,
             ground_stations=ground_stations,
-            outage_requests=outage_requests
+            outage_requests=outage_requests,
+            ground_station_outage_requests=[]
         )
 
         alg_t0 = time.time()
@@ -178,7 +184,7 @@ elif args.alg_type == 'api':
 
             solution = ScheduleOutput.model_validate(response.json())
 
-            print_api_result(solution)
+            print_api_result(solution, style=Fore.GREEN)
 
 
             jobs_scheduled = sum([
@@ -198,7 +204,8 @@ elif args.alg_type == 'api':
         print(e)
 
     finally:
-        server.stop()
+        if server:
+            server.stop()
 
 else:
     raise Exception('Invalid command line argument option')
