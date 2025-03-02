@@ -17,5 +17,8 @@ storage/
 debug/
 debug_old/
 
+# Ignore the build directory where Sphinx generates files
+docs/build/
+
 # Random files for testing
 QUESTIONS.txt

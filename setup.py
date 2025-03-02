@@ -19,6 +19,12 @@ setup(
         'skyfield',
         'uvicorn'
     ],
+    extras_require={
+        'docs': [
+            'sphinx',
+            'sphinx_rtd_theme'
+        ]
+    },
     entry_points={},
     description='Satellite operations services optimizer.',
     url='https://github.com/ENG4000-SOSO/genetic-algorithms',
