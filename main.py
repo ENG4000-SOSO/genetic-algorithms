@@ -172,7 +172,7 @@ elif args.alg_type in ['api-full', 'api-request']:
 
         # Send a test request
         response = requests.post(
-            "http://127.0.0.1:8000/schedule",
+            f'http://localhost:{os.environ.get("PORT", 8080)}/schedule',
             headers={"Content-Type": "application/json"},
             json=json.loads(params.model_dump_json())
         )
