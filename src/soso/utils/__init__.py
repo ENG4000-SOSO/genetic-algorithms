@@ -6,6 +6,7 @@ Utilities to be used to simplify the running and testing of the SOSO algorithm.
 import json
 import os
 from pathlib import Path
+import requests
 import select
 import subprocess
 import threading
@@ -19,12 +20,15 @@ from soso.bin_packing.ground_station_bin_packing import \
     BinPackingResult, \
     ScheduleUnit
 from soso.genetic.genetic_scheduler import GeneticAlgorithmResult
-from soso.interface import ScheduleOutput
+from soso.interface import ScheduleParameters, ScheduleOutput
 from soso.job import GroundStation
 from soso.job import Job, TwoLineElement
 from soso.network_flow.edge_types import SatelliteToList
 from soso.network_flow.network_flow_scheduler import NetworkFlowResult
-from soso.outage_request import MaintenanceOrder, OutageRequest, Window, RepeatCycle, Frequency, handle_repeated_outages
+from soso.outage_request import \
+    MaintenanceOrder, \
+    OutageRequest, \
+    handle_repeated_outages
 
 
 FORMAT = '%B %d %Y @ %I:%M %p'
@@ -409,10 +413,16 @@ class SchedulerServer:
     The subprocess that will run the server.
     '''
 
-    def __init__(self):
+    port = 8000
+    '''
+    The port that the server will be run on.
+    '''
+
+    def __init__(self, port: int = 8000):
         self.stop_flag = False
         self.process = None
         self.thread = None
+        self.port = port
 
     def _run(self):
         '''
@@ -427,7 +437,14 @@ class SchedulerServer:
 
         # Start the FastAPI server
         self.process = subprocess.Popen(
-            ['uvicorn', 'soso.api:app', '--log-level', 'debug'],
+            [
+                'uvicorn',
+                'soso.api:app',
+                '--log-level',
+                'debug',
+                '--port',
+                str(self.port)
+            ],
             shell=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
@@ -514,3 +531,90 @@ class SchedulerServer:
         self.stop_flag = True
         self.thread.join()
         self.thread = None
+
+
+class BadStatusCodeException(Exception):
+    '''
+    Exception raised when an API request was sent to the scheduler but did not
+    receive a 200 status code response.
+    '''
+
+    def __init__(self, response: requests.Response):
+        super().__init__(response)
+
+
+class SchedulerApiCallException(Exception):
+    '''
+    Exception raised when an API request was sent to the scheduler but an error
+    was raised.
+    '''
+
+    def __init__(self, exception: Exception):
+        super().__init__(exception)
+
+
+def send_api_request(
+    params: ScheduleParameters,
+    port = 8000
+) -> ScheduleOutput:
+    '''
+    Sends and API request to the scheduler API.
+
+    Args:
+        params: The scheduler parameters to send to the scheduler API.
+
+        port: The port that the scheduler API server is being run on.
+
+    Returns:
+        The output of the scheduler API call.
+    '''
+
+    try:
+        # Send a test request
+        response = requests.post(
+            f'http://localhost:{port}/schedule',
+            headers={"Content-Type": "application/json"},
+            json=json.loads(params.model_dump_json())
+        )
+
+        if response.status_code == 200:
+            return ScheduleOutput.model_validate(response.json())
+        else:
+            print(f'Response status: {response.status_code}')
+            print(response.content)
+            raise BadStatusCodeException(response)
+
+    except Exception as e:
+        print('Error in API call')
+        print(e)
+        raise SchedulerApiCallException(e)
+
+
+def run_server_and_send_request(
+    params: ScheduleParameters,
+    port = 8000
+):
+    '''
+    Starts the scheduler API server in another thread and sends and API request
+    to the server.
+
+    Args:
+        params: The scheduler parameters to send to the scheduler API.
+
+        port: The port to run scheduler API server on and to send the API
+            request to.
+
+    Returns:
+        The output of the scheduler API call.
+    '''
+
+    try:
+        server = SchedulerServer(port=port)
+        server.start()
+
+        time.sleep(3)
+
+        return send_api_request(params, port=port)
+    finally:
+        if server:
+            server.stop()

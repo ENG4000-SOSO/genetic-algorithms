@@ -4,13 +4,11 @@ Main script for running the scheduler from the command line in different ways.
 
 
 import argparse
-import json
 import logging
 import logging.config
 logging.config.fileConfig('logging_config.ini')
 import os
 from pathlib import Path
-import requests
 import time
 
 from colorama import Fore
@@ -29,8 +27,9 @@ from soso.utils import \
     print_bin_packing_result, \
     print_genetic_result, \
     print_network_flow_result, \
-    SchedulerServer
-from soso.interface import ScheduleOutput, ScheduleParameters
+    run_server_and_send_request, \
+    send_api_request
+from soso.interface import ScheduleParameters
 from soso.interval_tree import generate_satellite_intervals
 
 
@@ -152,60 +151,33 @@ if args.alg_type in ['network', 'bin', 'genetic']:
         )
 
 elif args.alg_type in ['api-full', 'api-request']:
-    try:
-        if args.alg_type == 'api-full':
-            server = SchedulerServer()
-            server.start()
-        else:
-            server = None
+    params = ScheduleParameters(
+        input_hash=None,
+        two_line_elements=two_line_elements,
+        jobs=jobs,
+        ground_stations=ground_stations,
+        outage_requests=outage_requests,
+        ground_station_outage_requests=[]
+    )
+    alg_t0 = time.time()
 
-        params = ScheduleParameters(
-            input_hash=None,
-            two_line_elements=two_line_elements,
-            jobs=jobs,
-            ground_stations=ground_stations,
-            outage_requests=outage_requests,
-            ground_station_outage_requests=[]
-        )
+    if args.alg_type == 'api-full':
+        solution = run_server_and_send_request(params)
+    else:
+        solution = send_api_request(params)
 
-        alg_t0 = time.time()
+    alg_t1 = time.time()
 
-        # Send a test request
-        response = requests.post(
-            f'http://localhost:{os.environ.get("PORT", 8080)}/schedule',
-            headers={"Content-Type": "application/json"},
-            json=json.loads(params.model_dump_json())
-        )
+    print_api_result(solution, style=Fore.GREEN)
 
-        if response.status_code == 200:
-            alg_t1 = time.time()
-
-            time.sleep(1)
-
-            solution = ScheduleOutput.model_validate(response.json())
-
-            print_api_result(solution, style=Fore.GREEN)
-
-
-            jobs_scheduled = sum([
-                len(planned_orders)
-                    for planned_orders in solution.planned_orders.values()
-            ])
-            print(
-                f'{jobs_scheduled} out of {len(jobs)} jobs scheduled in '
-                    f'{alg_t1 - alg_t0} seconds'
-            )
-        else:
-            print(f'Response status: {response.status_code}')
-            print(response.content)
-
-    except Exception as e:
-        print('Error in API call')
-        print(e)
-
-    finally:
-        if server:
-            server.stop()
+    jobs_scheduled = sum([
+        len(planned_orders)
+            for planned_orders in solution.planned_orders.values()
+    ])
+    print(
+        f'{jobs_scheduled} out of {len(params.jobs)} jobs scheduled in '
+            f'{alg_t1 - alg_t0} seconds'
+    )
 
 else:
     raise Exception('Invalid command line argument option')
