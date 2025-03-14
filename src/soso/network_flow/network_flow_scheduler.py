@@ -41,6 +41,7 @@ be extracted and formatted into a schedule.
 '''
 
 
+from dataclasses import dataclass
 import logging
 import logging.config
 from pathlib import Path
@@ -80,6 +81,38 @@ to have a point on Earth in its field-of-view.
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+@dataclass
+class NetworkFlowResult:
+    '''
+    A DTO containing the results of the network flow scheduling algorithm.
+    '''
+
+    job_to_sat_edges: SatelliteToList[JobToSatelliteTimeSlotEdge]
+    '''
+    A dictionary mapping each satellite to a list of job-to-timeslot edges.
+    '''
+
+    optimized_out_jobs: List[Job]
+    '''
+    Jobs that could have been scheduled, but were not as part of the
+    optimization process.
+    '''
+
+    @staticmethod
+    def empty(satellites: List[EarthSatellite]) -> 'NetworkFlowResult':
+        '''
+        Returns an empty `NetworkFlowResult` object with the given satellites.
+        This is used for the edge case where there are no jobs to schedule.
+
+        Args:
+            satellites: The list of satellites.
+
+        Returns:
+            An empty `NetworkFlowResult` object.
+        '''
+        return NetworkFlowResult({sat: [] for sat in satellites}, [])
+
+
 def get_scheduled_and_unscheduled_jobs(
     jobs: List[Job],
     jobs_to_sat_edges: SatelliteToList[JobToSatelliteTimeSlotEdge]
@@ -91,13 +124,14 @@ def get_scheduled_and_unscheduled_jobs(
     Otherwise, it is not scheduled.
 
     Note that this function can also be used to find schedulable and
-    unschedulable jobs (if that's what the underlying network flow graph represents).
+    unschedulable jobs (if that's what the underlying network flow graph
+    represents).
 
     Args:
         jobs: List of all jobs.
 
         jobs_to_sat_edges: Edges in the network flow graph from jobs to
-        satellite timeslots.
+            satellite timeslots.
 
     Returns:
         A tuple containing two sets, the first being the scheduled jobs and the
@@ -114,6 +148,46 @@ def get_scheduled_and_unscheduled_jobs(
     unschedulable_jobs = jobs_set.difference(schedulable_jobs)
 
     return schedulable_jobs, unschedulable_jobs
+
+
+def get_optimized_out_jobs(
+    satellite_intervals: SatelliteToList[SatelliteInterval],
+    job_to_sat_edges: SatelliteToList[JobToSatelliteTimeSlotEdge]
+) -> List[Job]:
+    '''
+    Gets all jobs that were not scheduled through the optimization process by
+    calculating the set difference between jobs in `satellite_intervals` and
+    jobs in `job_to_sat_edges`.
+
+    Args:
+        satellite_intervals: Dictionary mapping each satellite to intervals from
+            the interval tree module.
+
+        job_to_sat_edges: Dictionary mapping each satellite to job-to-timeslot
+            edges from this (network flow) module.
+
+    Returns:
+        The jobs that were unscheduled due to the optimization process.
+    '''
+
+    initial_jobs: Set[Job] = set()
+    optimized_jobs: Set[Job] = set()
+
+    # Collect all jobs from satellite intervals
+    for intervals in satellite_intervals.values():
+        for interval in intervals:
+            for job in interval.data:
+                initial_jobs.add(job)
+
+    # Collect all scheduled jobs from job-to-timeslot edges
+    for edges in job_to_sat_edges.values():
+        for edge in edges:
+            optimized_jobs.add(edge.job)
+
+    # Calculate the set difference to find unscheduled jobs
+    unscheduled_jobs = initial_jobs.difference(optimized_jobs)
+
+    return list(unscheduled_jobs)
 
 
 @debug
@@ -173,7 +247,7 @@ def debug_network_info(
     for job in unscheduled_jobs:
         logger.debug(f'{job} not scheduled')
 
-    logger.info(
+    logger.debug(
         f'Out of {len(jobs)} jobs, {len(scheduled_jobs)} were '
             f'scheduled, {len(unscheduled_jobs)} were not, '
             f'({len(unschedulable_jobs)} jobs were not possible to be '
@@ -335,7 +409,7 @@ def run_network_flow(
     jobs: List[Job],
     satellite_intervals: SatelliteToList[SatelliteInterval],
     debug_mode: Optional[Path | bool] = None
-) -> SatelliteToList[JobToSatelliteTimeSlotEdge]:
+) -> NetworkFlowResult:
     '''
     The main entry point to the network flow part of the SOSO scheduling
     algorithm.
@@ -360,7 +434,7 @@ def run_network_flow(
         are representations of a job scheduled in a time slot.
     '''
 
-    logger.info('Starting network flow algorithm')
+    logger.debug('Starting network flow algorithm')
 
     alg_t0 = time.time()
 
@@ -412,7 +486,7 @@ def run_network_flow(
         # handle that error gracefully here.
         logger.error(f'networkx exception: returning early')
         logger.error(f'networkx exception: {e}')
-        return {sat: [] for sat in satellites}
+        return NetworkFlowResult.empty(satellites)
 
     graph_t1 = time.time()
     logger.debug(f'Finding the maximum flow took {graph_t1 - graph_t0} seconds')
@@ -420,9 +494,17 @@ def run_network_flow(
     # Get the optimal edges from the graph
     optimal_edges = extract_optimal_edges(flow_dict, satellites)
 
+    # Get the jobs that were "optimized out"
+    optimized_out_jobs = get_optimized_out_jobs(
+        satellite_intervals,
+        optimal_edges.jobToSatelliteTimeSlotEdges
+    )
+
     alg_t1 = time.time()
 
-    logger.info(f'Total runtime (without plotting): {alg_t1 - alg_t0}')
+    logger.info(
+        f'Total network flow runtime (without plotting): {alg_t1 - alg_t0}'
+    )
 
     debug_network_info(
         G,
@@ -434,5 +516,7 @@ def run_network_flow(
         debug_mode
     )
 
-    # return format_solution(satellites, optimal_edges)
-    return optimal_edges.jobToSatelliteTimeSlotEdges
+    return NetworkFlowResult(
+        optimal_edges.jobToSatelliteTimeSlotEdges,
+        optimized_out_jobs
+    )

@@ -20,7 +20,30 @@ from skyfield.api import EarthSatellite, Time, Timescale, wgs84
 from soso.debug import debug
 from soso.interval_tree import GroundStationPassInterval, SatelliteInterval
 from soso.job import GroundStation, Job, SatellitePassLocation
-from soso.outage_request import OutageRequest
+from soso.outage_request import GroundStationOutageRequest, OutageRequest
+
+
+@dataclass
+class SatelliteIntervalData:
+    '''
+    A DTO containing the mapping from satellites to interval trees, as well as
+    unschedulable and unscheduled jobs.
+    '''
+
+    trees: Dict[EarthSatellite, IntervalTree]
+    '''
+    A dictionary mapping each satellite to its interval tree.
+    '''
+
+    unschedulable_jobs: List[Job]
+    '''
+    Jobs that are not schedulable.
+    '''
+
+    unschedulable_after_outages_jobs: List[Job]
+    '''
+    Jobs that are not schedulable due to outage requests.
+    '''
 
 
 @dataclass
@@ -43,6 +66,41 @@ class SatellitePasses:
     interval contains being and end times and a ground station that the
     satellite passes over within the being and end times.
     '''
+
+    unschedulable_jobs: List[Job]
+    '''
+    Jobs that are not schedulable.
+    '''
+
+    unschedulable_after_outages_jobs: List[Job]
+    '''
+    Jobs that are not schedulable due to outage requests.
+    '''
+
+    unschedulable_after_ground_station_jobs: List[Job]
+    '''
+    Jobs that are not schedulable due to lack of ground station availability.
+    '''
+
+    @staticmethod
+    def empty(satellites: List[EarthSatellite]) -> 'SatellitePasses':
+        '''
+        Returns an empty `SatellitePasses` object with the given satellites.
+        This is used for the edge case where there are no jobs to schedule.
+
+        Args:
+            satellites: The list of satellites.
+
+        Returns:
+            An empty `SatellitePasses` object.
+        '''
+        return SatellitePasses(
+            {sat: [] for sat in satellites},
+            {sat: [] for sat in satellites},
+            [],
+            [],
+            []
+        )
 
 
 ALTITUDE_DEGREES = 30.0
@@ -69,15 +127,24 @@ def get_unschedulable_events(
 
     A job is not schedulable if it is not in any of the satellites' interval
     trees.
+
+    Args:
+        trees: A dictionary mapping each satellite to an interval tree.
+
+        jobs: The list of all jobs.
+
+    Returns:
+        The set of jobs that are not in any of the interval trees.
     '''
+
     schedulable_job_set: Set[Job] = set()
     all_job_set: Set[Job] = set(jobs)
     for tree in trees.values():
         for interval in tree:
             for job in cast(Set[Job], interval.data):
                 schedulable_job_set.add(job)
-    unscheduled_job_set = all_job_set.difference(schedulable_job_set)
-    return unscheduled_job_set
+    unschedulable_job_set = all_job_set.difference(schedulable_job_set)
+    return unschedulable_job_set
 
 
 @debug
@@ -130,6 +197,39 @@ def log_interval_trees_after_outages(
                 'outage requests: %s',
             unscheduled_job_set
         )
+
+
+def get_filtered_out_jobs(
+    unfiltered_satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
+    filtered_satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]]
+) -> List[Job]:
+    '''
+    Gets jobs that were filtered out of the satellite intervals.
+
+    Args:
+        unfiltered_satellite_intervals: The satellite intervals before
+            filtering.
+
+        filtered_satellite_intervals: The satellite intervals after filtering.
+
+    Returns:
+        The jobs that were filtered out of the satellite intervals.
+    '''
+
+    unfiltered_job_set: Set[Job] = set()
+    for intervals in unfiltered_satellite_intervals.values():
+        for interval in intervals:
+            for job in interval.data:
+                unfiltered_job_set.add(job)
+
+    filtered_job_set: Set[Job] = set()
+    for intervals in filtered_satellite_intervals.values():
+        for interval in intervals:
+            for job in interval.data:
+                filtered_job_set.add(job)
+
+    filtered_out_job_set = unfiltered_job_set.difference(filtered_job_set)
+    return list(filtered_out_job_set)
 
 
 def find_pass_events(
@@ -205,6 +305,7 @@ def find_pass_events(
 def generate_ground_station_pass_intervals(
     satellites: List[EarthSatellite],
     ground_stations: List[GroundStation],
+    ground_station_outage_requests: List[GroundStationOutageRequest],
     t0: Time,
     t1: Time,
     eph: Any
@@ -219,6 +320,9 @@ def generate_ground_station_pass_intervals(
             passes.
 
         ground_stations: The list of ground stations.
+
+        ground_station_outage_requests: The list of ground station outage
+            requests.
 
         t0: The start time of the space mission.
 
@@ -253,9 +357,20 @@ def generate_ground_station_pass_intervals(
 
             # Add the pass events to the dictionary
             for begin, end in events:
-                ground_station_pass_intervals[sat].append(
-                    GroundStationPassInterval(begin, end, ground_station)
-                )
+                # Check if this pass event is blocked by an outage request
+                can_schedule = True
+                for outage_request in ground_station_outage_requests:
+                    if outage_request.ground_station != ground_station:
+                        continue
+                    if begin > outage_request.end or end < outage_request.start:
+                        pass
+                    else:
+                        can_schedule = False
+
+                if can_schedule:
+                    ground_station_pass_intervals[sat].append(
+                        GroundStationPassInterval(begin, end, ground_station)
+                    )
 
     return ground_station_pass_intervals
 
@@ -304,7 +419,7 @@ def generate_trees(
     t0: Time,
     t1: Time,
     eph: Any
-) -> Dict[EarthSatellite, IntervalTree]:
+) -> SatelliteIntervalData:
     '''
     Generates interval trees for each satellite representing schedulable jobs.
 
@@ -354,6 +469,7 @@ def generate_trees(
     for sat, tree in trees.items():
         tree.merge_overlaps(data_reducer=lambda x, y: x.union(y))
 
+    unschedulable_job_set = get_unschedulable_events(trees, jobs)
     log_interval_trees(trees, jobs)
 
     # Remove intervals that overlap with outage requests
@@ -363,9 +479,15 @@ def generate_trees(
             outage_request.end
         )
 
+    unschedulable_job_set_after_outages = \
+        get_unschedulable_events(trees, jobs)
     log_interval_trees_after_outages(trees, jobs)
 
-    return trees
+    return SatelliteIntervalData(
+        trees,
+        list(unschedulable_job_set),
+        list(unschedulable_job_set_after_outages)
+    )
 
 
 def get_start_and_end_times_of_mission(jobs: List[Job], ts: Timescale):
@@ -439,7 +561,7 @@ def convert_trees_to_satellite_intervals(
     return satellite_intervals
 
 
-def filter_unschedulable_timeslots(
+def filter_unschedulable_timeslots_from_ground_stations(
     satellite_intervals: Dict[EarthSatellite, List[SatelliteInterval]],
     ground_station_passes: Dict[EarthSatellite, List[GroundStationPassInterval]]
 ) -> Dict[EarthSatellite, List[SatelliteInterval]]:
@@ -482,6 +604,7 @@ def generate_satellite_intervals(
     jobs: List[Job],
     outage_requests: List[OutageRequest],
     ground_stations: List[GroundStation],
+    ground_station_outage_requests: List[GroundStationOutageRequest],
     ts: Timescale,
     eph: Any
 ) -> SatellitePasses:
@@ -500,6 +623,9 @@ def generate_satellite_intervals(
 
         ground_stations: The list of ground stations.
 
+        ground_station_outage_requests: The list of ground station outage
+            requests.
+
         ts: The Skyfield timescale being used to simulate events in the future.
 
         eph: The Skyfield ephemeris data being used to perform astronomical
@@ -508,18 +634,15 @@ def generate_satellite_intervals(
     Returns:
         A dictionary mapping each satellite to a list, where items in the list
         are intervals. Each interval has a `begin` and an `end` time properties,
-        and a `data` property that is a set of jobs that can be scheduled in that
-        interval (only one job in the set will be chosen to be scheduled in the
-        interval).
+        and a `data` property that is a set of jobs that can be scheduled in
+        that interval (only one job in the set will be chosen to be scheduled in
+        the interval).
     '''
 
     # Empty jobs edge case
     if len(jobs) == 0:
         logger.info('Empty jobs list, returning early')
-        return SatellitePasses(
-            {sat: [] for sat in satellites},
-            {sat: [] for sat in satellites}
-        )
+        return SatellitePasses.empty(satellites)
 
     tree_t0 = time.time()
 
@@ -531,28 +654,52 @@ def generate_satellite_intervals(
     # Generate interval trees.
     # One interval tree per satellite, where each interval in the tree holds the
     # jobs that could be scheduled in that interval.
-    trees = generate_trees(satellites, jobs, outage_requests, t0, t1, eph)
+    satellite_interval_data = generate_trees(
+        satellites,
+        jobs,
+        outage_requests,
+        t0,
+        t1,
+        eph
+    )
 
     # Generate ground station passes.
     ground_station_passes = generate_ground_station_pass_intervals(
         satellites,
         ground_stations,
+        ground_station_outage_requests,
         t0,
         t1,
         eph
     )
 
     tree_t1 = time.time()
-    logger.debug(f'Making the interval trees took {tree_t1 - tree_t0} seconds')
+    logger.info(f'Making the interval trees took {tree_t1 - tree_t0} seconds')
 
     # Convert the interval trees to lists of intervals to simplify the interface
-    unfiltered_satellite_intervals = \
-        convert_trees_to_satellite_intervals(satellites, trees)
+    unfiltered_satellite_intervals = convert_trees_to_satellite_intervals(
+        satellites,
+        satellite_interval_data.trees
+    )
 
-    satellite_intervals = filter_unschedulable_timeslots(
+    # Filter out intervals that cannot be downlinked by a ground station pass
+    satellite_intervals = filter_unschedulable_timeslots_from_ground_stations(
         unfiltered_satellite_intervals,
         ground_station_passes
     )
 
+    # Get the jobs that were filtered out of the satellite intervals due to lack
+    # of available ground station passes
+    filtered_out_jobs = get_filtered_out_jobs(
+        unfiltered_satellite_intervals,
+        satellite_intervals
+    )
+
     # Return satellite intervals and ground station passes in a DTO
-    return SatellitePasses(satellite_intervals, ground_station_passes)
+    return SatellitePasses(
+        satellite_intervals,
+        ground_station_passes,
+        satellite_interval_data.unschedulable_jobs,
+        satellite_interval_data.unschedulable_after_outages_jobs,
+        filtered_out_jobs
+    )

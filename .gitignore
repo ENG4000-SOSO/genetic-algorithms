@@ -10,6 +10,9 @@ soso.egg-info/
 # IDE configs
 .vscode/*
 
+# Storing input parameters and outputs of scheduler runs
+storage/
+
 # Debugging information
 debug/
 debug_old/

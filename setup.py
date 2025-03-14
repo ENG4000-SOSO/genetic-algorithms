@@ -8,13 +8,16 @@ setup(
     package_dir={'': 'src'},
     install_requires=[
         'basemap',
+        'fastapi',
         'intervaltree',
         'matplotlib',
         'networkx',
         'numpy',
+        'ortools',
         'pandas',
+        'pydantic',
         'skyfield',
-        'ortools'
+        'uvicorn'
     ],
     entry_points={},
     description='Satellite operations services optimizer.',
