@@ -124,6 +124,11 @@ class ScheduleOutput(BaseModel):
     ground stations to downlink them.
     '''
 
+    undownlinkable_orders: List[Job]
+    '''
+    Orders that were impossible to be downlinked.
+    '''
+
     rejected_orders: List[Job]
     '''
     Jobs that could have been scheduled but were not as part of the optimization

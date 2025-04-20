@@ -71,12 +71,12 @@ from soso.network_flow.network_flow_scheduler import run_network_flow
 from soso.outage_request import OutageRequest
 
 
-POPULATION_SIZE = 5
+POPULATION_SIZE = 20
 '''
 The number of problem instances to be considering at any given time.
 '''
 
-GENERATIONS = 5
+GENERATIONS = 25
 '''
 The number of iterations of the genetic algorithm.
 '''
@@ -148,10 +148,23 @@ class GeneticAlgorithmResult:
     The result of the genetic algorithm.
     '''
 
+    undownlinkable_jobs: List[Job]
+    '''
+    Jobs that could not be downlinked.
+    '''
+
     optimized_out_jobs: List[Job]
     '''
     Jobs that were not scheduled as part of the optimization process.
     '''
+
+
+def sigmoid(x):
+    '''
+    Sigmoid function to be used when normalizing metrics for fitness
+    calculations.
+    '''
+    return 1 / (1 + np.exp(-x))
 
 
 def optimize_schedule(
@@ -216,6 +229,7 @@ def optimize_schedule(
 
     return GeneticAlgorithmResult(
         bin_packing_result.result,
+        bin_packing_result.impossible_jobs,
         optimized_out_jobs
     )
 
@@ -320,6 +334,9 @@ class Individual:
         if self.__fitness is not None:
             return self.__fitness
 
+        # Increase variance multiplier
+        run_genetic_algorithm.variance_multiplier += 1.0 / (POPULATION_SIZE * GENERATIONS)
+
         # Generate the satellite intervals corresponding to the jobs that are
         # enabled in the individual's genome
         satellite_intervals = get_satellite_intervals_from_genome(
@@ -342,7 +359,12 @@ class Individual:
             len(schedule_units)
                 for satellite, schedule_units in result.items()
         ]
-        variance = np.var(jobs_in_each_satellite)
+
+        # variance = np.var(jobs_in_each_satellite) * total_jobs
+        average_jobs_in_each_satellite = np.average(jobs_in_each_satellite)
+        variance = 0
+        for j in jobs_in_each_satellite:
+            variance += abs(average_jobs_in_each_satellite - j)
 
         # Calculate the weighted sum of the priorities of all jobs
         total_job_priority_sum = sum(
@@ -363,13 +385,14 @@ class Individual:
 
         # Weighted-percentage of jobs scheduled (the weights are the job
         # priorities)
-        P = (total_scheduled_job_priority_sum / total_job_priority_sum)
+        P = total_scheduled_job_priority_sum
 
         # Smaller variance is better, so normalize by using 1-variance
-        V = 1 - variance
+        V = variance
 
         # Fitness formula
-        F = 750*P + 13*V
+        F = P - run_genetic_algorithm.variance_multiplier * V
+        logger.debug(f'Fitness: {F}, Percentage: {P}, Variance: {V}, VMultiplier: {run_genetic_algorithm.variance_multiplier}')
 
         # Set fitness of individual
         self.__fitness = float(F)
@@ -553,10 +576,13 @@ def crossover(
                     # Choose one of the two parents randomly where the parent
                     # with the higher fitness has a higher probability of being
                     # chosen
-                    chosen_parent = random.choices(
-                        parents,
-                        weights=fitnesses
-                    )[0]
+                    if sum(fitnesses) > 0:
+                        chosen_parent = random.choices(
+                            parents,
+                            weights=fitnesses
+                        )[0]
+                    else:
+                        chosen_parent = random.choice(parents)
 
                 # Use the chromosome from the chosen parent
                 chromosome = chosen_parent.genome[sat][i]
@@ -635,6 +661,13 @@ def run_genetic_algorithm(
     logger.info('Starting genetic algorithm')
 
     start_time = time.time()
+
+    run_genetic_algorithm.variance_multiplier = 1
+    '''
+    Multiplier for the variance that increases over time, so that as the
+    algorithm progresses the "equal resource usage constraint" becomes more
+    important.
+    '''
 
     best_individual: Optional[Individual] = None
     '''

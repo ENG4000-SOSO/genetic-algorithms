@@ -6,7 +6,6 @@ Definitions of FastAPI HTTP endpoints.
 import logging
 import logging.config
 logging.config.fileConfig('logging_config.ini')
-import os
 
 from fastapi import FastAPI, Request
 

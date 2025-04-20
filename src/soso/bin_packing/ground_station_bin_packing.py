@@ -99,6 +99,8 @@ class BinPackingResult:
     The solution to the bin packing problem.
     '''
 
+    impossible_jobs: List[Job]
+
     infeasible_jobs: List[Job]
     '''
     Jobs that could not be scheduled due to infeasibility.
@@ -117,7 +119,7 @@ class BinPackingResult:
         Returns:
             An empty `BinPackingResult` object.
         '''
-        return BinPackingResult({sat: [] for sat in satellites}, [])
+        return BinPackingResult({sat: [] for sat in satellites}, [], [])
 
 
 @debug
@@ -152,6 +154,49 @@ def debug_size_and_capacity_information(
             f'{int(total_capacity_bytes / 1_000_000):,} MB available in '
             f'{len(ground_station_passes)} ground station passes, '
     )
+
+
+def get_job_set_from_satellite_timeslots(
+    satellite_timeslots: SatelliteToList[JobToSatelliteTimeSlotEdge]
+) -> Set[Job]:
+    job_set: Set[Job] = set()
+
+    for edges in satellite_timeslots.values():
+        for edge in edges:
+            job_set.add(edge.job)
+
+    return job_set
+
+
+def get_impossible_to_downlink_jobs(
+    satellite_timeslots: SatelliteToList[JobToSatelliteTimeSlotEdge],
+    downlinking_opportunities: SatelliteToList[DownlinkingOpportunities]
+) -> List[Job]:
+    '''
+    Gets all jobs that had no downlinking opportunities.
+
+    Args:
+        satellite_timeslots: Dictionary mapping each satellite to
+            job-to-timeslot edges from the network flow module.
+
+        solution: The downlinking opportunities found for all the jobs.
+
+    Returns:
+        The list of jobs that were scheduled in the network flow solution, were
+        not possible to be downlinked.
+    '''
+
+    initial_jobs: Set[Job] = get_job_set_from_satellite_timeslots(satellite_timeslots)
+
+    possible_jobs = set()
+
+    for opps in downlinking_opportunities.values():
+        for opp in opps:
+            possible_jobs.add(opp.satellite_timeslot.job)
+
+    impossible_jobs = initial_jobs - possible_jobs
+
+    return list(impossible_jobs)
 
 
 def get_unpacked_jobs(
@@ -431,6 +476,23 @@ def schedule_downlinks_for_satellite(
         )
 
 
+def timeslots_are_empty(
+    satellite_timeslots: SatelliteToList[JobToSatelliteTimeSlotEdge],
+    ground_station_passes: SatelliteToList[GroundStationPassInterval]
+):
+    timeslots_exist = False
+    for timeslots in satellite_timeslots.values():
+        for timeslot in timeslots:
+            timeslots_exist = True
+
+    gs_passes_exist = False
+    for gs_passes in ground_station_passes.values():
+        for gs_pass in gs_passes:
+            gs_passes_exist = True
+
+    return not timeslots_exist or not gs_passes_exist
+
+
 def schedule_downlinks(
     satellites: List[EarthSatellite],
     satellite_timeslots: SatelliteToList[JobToSatelliteTimeSlotEdge],
@@ -452,7 +514,7 @@ def schedule_downlinks(
         jobs, and ground station passes to downlink the jobs.
     '''
 
-    if len(satellite_timeslots) == 0 or len(ground_station_passes) == 0:
+    if timeslots_are_empty(satellite_timeslots, ground_station_passes):
         logger.info(
             'No satellite timeslots or ground station passes to optimize, '
                 'exiting early'
@@ -471,19 +533,22 @@ def schedule_downlinks(
 
             downlinks: List[GroundStationPassInterval] = []
 
-            for ground_station_pass in ground_station_passes[sat]:
+            for gs_pass in ground_station_passes[sat]:
                 # There is a downlinking opportunity between a job and a ground
-                # station pass if the job's delivery time is before the
-                # beginning of the ground station pass
-                if timeslot.job.delivery < ground_station_pass.begin:
-                    downlinks.append(ground_station_pass)
+                # station pass if the job's delivery time is after the ground
+                # station pass
+                if gs_pass.begin > timeslot.job.end and gs_pass.end < timeslot.job.delivery:
+                    downlinks.append(gs_pass)
 
-            downlinking_opportunities[sat].append(
-                DownlinkingOpportunities(
-                    timeslot,
-                    downlinks
+            if len(downlinks) > 0:
+                downlinking_opportunities[sat].append(
+                    DownlinkingOpportunities(
+                        timeslot,
+                        downlinks
+                    )
                 )
-            )
+
+    impossible_jobs = get_impossible_to_downlink_jobs(satellite_timeslots, downlinking_opportunities)
 
     solution: SatelliteToList[ScheduleUnit] = {sat: [] for sat in satellites}
 
@@ -505,5 +570,6 @@ def schedule_downlinks(
 
     return BinPackingResult(
         solution,
+        impossible_jobs,
         unpacked_jobs
     )

@@ -120,7 +120,8 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 def get_unschedulable_events(
         trees: Dict[EarthSatellite, IntervalTree],
-        jobs: List[Job]
+        jobs: List[Job],
+        already_unschedulable_jobs: Set[Job] = set()
     ) -> Set[Job]:
     '''
     Gets all jobs that are not schedulable.
@@ -133,6 +134,8 @@ def get_unschedulable_events(
 
         jobs: The list of all jobs.
 
+        already_unschedulable_jobs: Jobs that were already unschedulable.
+
     Returns:
         The set of jobs that are not in any of the interval trees.
     '''
@@ -144,7 +147,7 @@ def get_unschedulable_events(
             for job in cast(Set[Job], interval.data):
                 schedulable_job_set.add(job)
     unschedulable_job_set = all_job_set.difference(schedulable_job_set)
-    return unschedulable_job_set
+    return unschedulable_job_set.difference(already_unschedulable_jobs)
 
 
 @debug
@@ -416,8 +419,7 @@ def generate_trees(
     satellites: List[EarthSatellite],
     jobs: List[Job],
     outage_requests: List[OutageRequest],
-    t0: Time,
-    t1: Time,
+    ts: Timescale,
     eph: Any
 ) -> SatelliteIntervalData:
     '''
@@ -434,9 +436,7 @@ def generate_trees(
 
         outage_requests: The full list of outage requests.
 
-        t0: The start time of the space mission.
-
-        t0: The end time of the space mission.
+        timescale: The Skyfield timescale object.
 
         eph: The ephemeris data used to perform astronomical calculations.
 
@@ -458,7 +458,9 @@ def generate_trees(
     # Update every satellite's interval tree with the jobs it can have scheduled
     for sat in satellites:
         for job in jobs:
-            update_trees_with_jobs(trees, sat, job, t0, t1, eph)
+            start = ts.from_datetime(job.start)
+            end = ts.from_datetime(job.end)
+            update_trees_with_jobs(trees, sat, job, start, end, eph)
 
     # Merge overlaps in each interval tree.
     #
@@ -480,7 +482,7 @@ def generate_trees(
         )
 
     unschedulable_job_set_after_outages = \
-        get_unschedulable_events(trees, jobs)
+        get_unschedulable_events(trees, jobs, unschedulable_job_set)
     log_interval_trees_after_outages(trees, jobs)
 
     return SatelliteIntervalData(
@@ -658,8 +660,7 @@ def generate_satellite_intervals(
         satellites,
         jobs,
         outage_requests,
-        t0,
-        t1,
+        ts,
         eph
     )
 

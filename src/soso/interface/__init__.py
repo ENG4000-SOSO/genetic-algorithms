@@ -9,7 +9,9 @@ from typing import cast, Dict, List
 
 from skyfield.api import EarthSatellite, load
 
-from soso.genetic.genetic_scheduler import run_genetic_algorithm
+from soso.genetic.genetic_scheduler import \
+    optimize_schedule, \
+    run_genetic_algorithm
 from soso.interval_tree import generate_satellite_intervals
 from soso.persistence import \
     get_persister, \
@@ -66,10 +68,20 @@ def run(params: ScheduleParameters) -> ScheduleOutput:
         eph
     )
 
+    good_jobs = [job for intervals in satellite_passes.satellite_intervals.values() for interval in intervals for job in interval.data]
+
+    perfect_genetic_result = optimize_schedule(
+        satellites,
+        good_jobs,
+        satellite_passes.satellite_intervals,
+        satellite_passes.ground_station_passes
+    )
+
     # Run the genetic algorithm to generate the schedule
     genetic_algorithm_result = run_genetic_algorithm(
         satellites,
-        params.jobs,
+        good_jobs,
+        # params.jobs,
         params.outage_requests,
         satellite_passes.satellite_intervals,
         satellite_passes.ground_station_passes
@@ -100,6 +112,17 @@ def run(params: ScheduleParameters) -> ScheduleOutput:
         for satellite, schedule_units in genetic_algorithm_result.result.items()
     }
 
+    planned_jobs = set(order.job for orders in planned_orders.values() for order in orders)
+
+    rejected_orders = list(
+        set(good_jobs)
+            .difference(satellite_passes.unschedulable_jobs)
+            .difference(satellite_passes.unschedulable_after_outages_jobs)
+            .difference(satellite_passes.unschedulable_after_ground_station_jobs)
+            .difference(perfect_genetic_result.undownlinkable_jobs)
+            .difference(planned_jobs)
+    )
+
     schedule_output = ScheduleOutput(
         input_hash=ScheduleOutput.convert_to_hash(params),
         impossible_orders=
@@ -108,8 +131,10 @@ def run(params: ScheduleParameters) -> ScheduleOutput:
             satellite_passes.unschedulable_after_outages_jobs,
         impossible_orders_from_ground_stations=
             satellite_passes.unschedulable_after_ground_station_jobs,
+        undownlinkable_orders=
+            perfect_genetic_result.undownlinkable_jobs,
         rejected_orders=
-            genetic_algorithm_result.optimized_out_jobs,
+            rejected_orders,
         planned_orders=
             planned_orders
     )

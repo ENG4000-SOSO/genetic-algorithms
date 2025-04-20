@@ -3,9 +3,11 @@ Utilities to be used to simplify the running and testing of the SOSO algorithm.
 '''
 
 
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import requests
 import select
 import subprocess
@@ -67,6 +69,28 @@ def counter_generator():
         i += 1
 
 
+DATA_FILENAME_REGEX = re.compile(r'\w+_(\d+)')
+
+
+@dataclass
+class FilepathAndIndex:
+    filepath: Path
+    index: int
+
+
+def get_sorted_filenames(data_dir: Path) -> List[FilepathAndIndex]:
+    file_list: List[FilepathAndIndex] = []
+
+    for filepath in data_dir.iterdir():
+        if filepath.is_file() and filepath.suffix.lower() == '.json':
+            filename_match = DATA_FILENAME_REGEX.search(filepath.stem)
+            if filename_match:
+                index = int(filename_match.group(1))
+                file_list.append(FilepathAndIndex(filepath, index))
+
+    return sorted(file_list, key=lambda x: x.index)
+
+
 def parse_jobs(order_data_dir: Path, name_prefix: str = '') -> List[Job]:
     '''
     Parses orders from a directory of JSON files.
@@ -81,10 +105,8 @@ def parse_jobs(order_data_dir: Path, name_prefix: str = '') -> List[Job]:
     jobs = []
     counter = counter_generator()
 
-    for filename in os.listdir(order_data_dir):
-        if filename.endswith('.json'):
-            full_path = order_data_dir / filename
-            with open(full_path, 'r') as f:
+    for filepath_and_index in get_sorted_filenames(order_data_dir):
+            with open(filepath_and_index.filepath, 'r') as f:
                 data = json.load(f)
 
                 c = next(counter)
@@ -92,7 +114,7 @@ def parse_jobs(order_data_dir: Path, name_prefix: str = '') -> List[Job]:
                 #     continue
 
                 job = Job(
-                    name=f'{name_prefix}Job {c}',
+                    name=f'{name_prefix}Job {filepath_and_index.index}',
                     start=data['ImageStartTime'],
                     end=data['ImageEndTime'],
                     delivery=data['DeliveryTime'],
@@ -363,7 +385,7 @@ def print_api_result(result: ScheduleOutput, style: str = ""):
 
     for satellite_name, dtos in result.planned_orders.items():
         print(style + f'Satellite: {satellite_name}')
-        for dto in dtos:
+        for dto in sorted(dtos, key=lambda order: order.job.name):
             job_start = dto.job_begin.strftime(FORMAT)
             job_end = dto.job_end.strftime(FORMAT)
             downlink_start = dto.downlink_begin.strftime(FORMAT)
@@ -375,18 +397,23 @@ def print_api_result(result: ScheduleOutput, style: str = ""):
                     f'downlinked at {dto.ground_station_name} '
                     f'from {downlink_start} to {downlink_end}'
             )
-    print(style + f'Impossible orders: {result.impossible_orders}')
+    print(style + f'Impossible orders: {sorted(result.impossible_orders, key=lambda job: job.name)}')
     print(
         style +
             f'Impossible orders from ground stations: '
-            f'{result.impossible_orders_from_ground_stations}'
+            f'{sorted(result.impossible_orders_from_ground_stations, key=lambda job: job.name)}'
     )
     print(
         style +
             f'Impossible orders from outages: '
-            f'{result.impossible_orders_from_outages}'
+            f'{sorted(result.impossible_orders_from_outages, key=lambda job: job.name)}'
     )
-    print(style + f'Rejected orders: {result.rejected_orders}')
+    print(
+        style +
+            f'Undownlinkable orders: '
+            f'{sorted(result.undownlinkable_orders, key=lambda job: job.name)}'
+    )
+    print(style + f'Rejected orders: {sorted(result.rejected_orders, key=lambda job: job.name)}')
 
 
 class SchedulerServer:

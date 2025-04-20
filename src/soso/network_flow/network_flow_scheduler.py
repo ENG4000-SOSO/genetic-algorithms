@@ -434,6 +434,10 @@ def run_network_flow(
         are representations of a job scheduled in a time slot.
     '''
 
+    if len(satellite_intervals) == 0 or len(jobs) == 0:
+        logger.info('No jobs or satellite intervals, returning early')
+        return NetworkFlowResult.empty(satellites)
+
     logger.debug('Starting network flow algorithm')
 
     alg_t0 = time.time()
