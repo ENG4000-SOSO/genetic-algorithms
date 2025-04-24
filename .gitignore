@@ -12,6 +12,7 @@ soso.egg-info/
 
 # Storing input parameters and outputs of scheduler runs
 storage/
+storage_old/
 
 # Debugging information
 debug/

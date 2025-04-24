@@ -8,9 +8,12 @@ setup(
     package_dir={'': 'src'},
     install_requires=[
         'basemap',
+        'boto3',
         'fastapi',
         'intervaltree',
         'matplotlib',
+        'mypy-boto3-dynamodb',
+        'mypy-boto3-s3',
         'networkx',
         'numpy',
         'ortools',

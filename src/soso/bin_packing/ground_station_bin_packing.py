@@ -515,7 +515,7 @@ def schedule_downlinks(
     '''
 
     if timeslots_are_empty(satellite_timeslots, ground_station_passes):
-        logger.info(
+        logger.debug(
             'No satellite timeslots or ground station passes to optimize, '
                 'exiting early'
         )
@@ -566,7 +566,7 @@ def schedule_downlinks(
     unpacked_jobs = get_unpacked_jobs(satellite_timeslots, solution)
 
     t1 = time.time()
-    logger.info(f'Bin packing took {t1-t0} seconds')
+    logger.debug(f'Bin packing took {t1-t0} seconds')
 
     return BinPackingResult(
         solution,
