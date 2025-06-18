@@ -54,4 +54,5 @@ docker run \
     -e S3_BUCKET_NAME="$S3_BUCKET_NAME" \
     -e DYNAMODB_TABLE_NAME="$DYNAMODB_TABLE_NAME" \
     -e JOB_ID="$job_id" \
+    -p 8000:8000 \
     soso-scheduler:$version

@@ -28,4 +28,4 @@ COPY ./src /app/src
 RUN pip install --no-cache-dir --upgrade .
 
 # Start the FastAPI server with Uvicorn.
-CMD ["uvicorn", "soso.api:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "soso.api:app", "--host", "0.0.0.0", "--port", "8000"]
